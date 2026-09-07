@@ -1,180 +1,259 @@
-<!-- SFML Playground — Main Layout -->
-<div class="playground">
-  <!-- ─── Header ─────────────────────────────────────────────────────── -->
-  <header class="toolbar">
-    <div class="toolbar-brand">
-      <div class="brand-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <rect x="3" y="3" width="18" height="18" rx="3" stroke="url(#grad)" stroke-width="2"/>
-          <circle cx="12" cy="12" r="4" fill="url(#grad)"/>
+<!-- SFML 2.6.2 Online IDE -->
+<div class="ide-container">
+  <!-- ─── Top Navbar ─────────────────────────────────────────────────── -->
+  <header class="ide-header">
+    <div class="header-left">
+      <div class="brand">
+        <svg class="brand-icon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="18" height="18" rx="4" stroke="url(#ide-grad)" stroke-width="2.2"/>
+          <circle cx="12" cy="12" r="4" fill="url(#ide-grad)"/>
           <defs>
-            <linearGradient id="grad" x1="3" y1="3" x2="21" y2="21">
+            <linearGradient id="ide-grad" x1="3" y1="3" x2="21" y2="21">
               <stop stop-color="#58a6ff"/>
               <stop offset="1" stop-color="#bc8cff"/>
             </linearGradient>
           </defs>
         </svg>
+        <span class="brand-title">SFML IDE</span>
+        <span class="version-badge">2.6.2</span>
       </div>
-      <h1 class="brand-title">SFML Playground</h1>
-      <span class="brand-badge">2.6.2</span>
+
+      <div class="project-pill" (click)="openProjectsModal()" title="Switch or manage projects">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+          <path d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2A1.75 1.75 0 004.99 1H1.75z"/>
+        </svg>
+        <span class="project-name">{{ currentProject?.name || 'Select Project' }}</span>
+        <svg class="dropdown-chevron" viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+          <path d="M4.427 6.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 6H4.604a.25.25 0 00-.177.427z"/>
+        </svg>
+      </div>
+
+      <!-- Save status -->
+      <div class="save-indicator" [class]="saveStatus" title="Autosave status">
+        <span class="save-dot" *ngIf="saveStatus === 'unsaved'">●</span>
+        <span class="save-spinner" *ngIf="saveStatus === 'saving'"></span>
+        <span class="save-check" *ngIf="saveStatus === 'saved'">✓</span>
+        <span class="save-label">{{ saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Unsaved' }}</span>
+      </div>
     </div>
 
-    <div class="toolbar-center">
+    <div class="header-center">
       <div class="status-indicator" [class]="statusClass">
         <span class="status-dot"></span>
         <span class="status-text">{{ statusText }}</span>
       </div>
     </div>
 
-    <div class="toolbar-actions">
-      <button
-        id="btn-run"
-        class="btn btn-run"
-        (click)="run()"
-        [disabled]="isLoading || isRunning"
-        title="Run (Ctrl+Enter)"
-      >
-        <svg class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 2l10 6-10 6V2z"/>
-        </svg>
-        <span>Run</span>
+    <div class="header-right">
+      <!-- User Profile Button -->
+      <button class="user-pill" (click)="changeUser()" title="Change user profile">
+        <span class="user-avatar">👤</span>
+        <span class="user-name">{{ currentUser?.username || 'Guest' }}</span>
       </button>
-      <button
-        id="btn-stop"
-        class="btn btn-stop"
-        (click)="stop()"
-        [disabled]="!isRunning && !isLoading"
-        title="Stop"
-      >
-        <svg class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
-          <rect x="3" y="3" width="10" height="10" rx="1"/>
-        </svg>
-        <span>Stop</span>
-      </button>
+
+      <!-- Action buttons -->
+      <div class="action-buttons">
+        <button
+          id="btn-run"
+          class="btn btn-run"
+          (click)="run()"
+          [disabled]="isLoading || isRunning || !currentProject"
+          title="Compile & Run Project (Ctrl+Enter)"
+        >
+          <svg class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4 2l10 6-10 6V2z"/>
+          </svg>
+          <span>Run</span>
+        </button>
+        <button
+          id="btn-stop"
+          class="btn btn-stop"
+          (click)="stop()"
+          [disabled]="!isRunning && !isLoading"
+          title="Stop Execution Session"
+        >
+          <svg class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="3" y="3" width="10" height="10" rx="1"/>
+          </svg>
+          <span>Stop</span>
+        </button>
+      </div>
     </div>
   </header>
 
-  <!-- ─── Main Content ───────────────────────────────────────────────── -->
-  <main class="content">
-    <!-- ─── Assets Sidebar Panel ──────────────────────────────────────── -->
-    <aside class="panel panel-assets" id="panel-assets"
-           (dragover)="onDragOver($event)"
-           (dragleave)="onDragLeave($event)"
-           (drop)="onDrop($event)"
-           [class.drag-over]="isDraggingOver">
-      <div class="panel-header">
-        <div class="panel-tab active">
-          <svg class="tab-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-            <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
+  <!-- ─── Main IDE Body ──────────────────────────────────────────────── -->
+  <main class="ide-main">
+    <!-- ─── Left Sidebar: Project Explorer ───────────────────────────── -->
+    <aside class="sidebar-explorer" id="sidebar-explorer">
+      <div class="explorer-header">
+        <span class="explorer-title">PROJECT EXPLORER</span>
+        <button class="icon-btn" (click)="openNewFileModal()" title="New File (+)">
+          <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+            <path d="M3.75 2h6.586a.75.75 0 01.53.22l3.414 3.414a.75.75 0 01.22.53v7.086A1.75 1.75 0 0112.75 15H3.75A1.75 1.75 0 012 13.25V3.75C2 2.784 2.784 2 3.75 2zm5.75 1.56V6.5a.5.5 0 00.5.5h2.94L9.5 3.56zM8 8a.75.75 0 01.75.75v1.5h1.5a.75.75 0 010 1.5h-1.5v1.5a.75.75 0 01-1.5 0v-1.5h-1.5a.75.75 0 010-1.5h1.5v-1.5A.75.75 0 018 8z"/>
           </svg>
-          <span>Assets</span>
-          <span class="asset-count-badge" *ngIf="assets.length">{{ assets.length }}</span>
-        </div>
+        </button>
       </div>
 
-      <div class="assets-content">
-        <!-- Asset list -->
-        <div class="asset-list" *ngIf="assets.length > 0">
-          <div class="asset-item" *ngFor="let asset of assets" [title]="asset.name">
-            <div class="asset-icon">
-              <!-- Image Icon -->
-              <svg *ngIf="isImage(asset.name)" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-                <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
-              </svg>
-              <!-- Audio Icon -->
-              <svg *ngIf="isAudio(asset.name)" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-                <path d="M8 2a1 1 0 00-1 1v7.17A2.5 2.5 0 109 12.5V5h3a1 1 0 001-1V3a1 1 0 00-1-1H8z"/>
-              </svg>
-              <!-- Font Icon -->
-              <svg *ngIf="isFont(asset.name)" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-                <path d="M4.5 3h7a.5.5 0 010 1h-3v8.5a.5.5 0 01-1 0V4h-3a.5.5 0 010-1z"/>
-              </svg>
-            </div>
-            <div class="asset-info">
-              <span class="asset-name">{{ asset.name }}</span>
-              <span class="asset-size">{{ formatBytes(asset.size) }}</span>
-            </div>
-            <button
-              class="asset-delete-btn"
-              (click)="deleteAsset(asset.name)"
-              title="Delete asset"
-              [disabled]="isUploading"
+      <div class="explorer-scroll-area">
+        <!-- Files Section -->
+        <div class="explorer-section">
+          <div class="section-label">
+            <span>FILES</span>
+            <span class="item-count">{{ currentProject?.files?.length || 0 }}</span>
+          </div>
+
+          <div class="file-list">
+            <div
+              *ngFor="let file of currentProject?.files"
+              class="tree-item file-item"
+              [class.active]="activeFile?.id === file.id"
+              (click)="selectFile(file)"
+              [title]="file.path"
             >
-              <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
-                <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
-              </svg>
+              <div class="tree-item-left">
+                <!-- C++ file icon -->
+                <span class="ext-badge" [class.hpp]="file.path.endsWith('.hpp') || file.path.endsWith('.h')">
+                  {{ file.path.endsWith('.hpp') || file.path.endsWith('.h') ? 'H' : 'C++' }}
+                </span>
+                <span class="item-name">{{ file.path }}</span>
+              </div>
+
+              <!-- Delete file (not main.cpp) -->
+              <button
+                *ngIf="file.path.toLowerCase() !== 'main.cpp'"
+                class="tree-action-btn delete-btn"
+                (click)="confirmDeleteFile(file, $event)"
+                title="Delete file"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <button class="add-file-btn" (click)="openNewFileModal()">
+            <span>+ New File</span>
+          </button>
+        </div>
+
+        <!-- Assets Section -->
+        <div
+          class="explorer-section assets-dropzone"
+          (dragover)="onDragOver($event)"
+          (dragleave)="onDragLeave($event)"
+          (drop)="onDrop($event)"
+          [class.drag-over]="isDraggingOver"
+        >
+          <div class="section-label">
+            <span>ASSETS</span>
+            <span class="item-count">{{ currentProject?.assets?.length || 0 }}</span>
+          </div>
+
+          <div class="asset-list" *ngIf="(currentProject?.assets?.length || 0) > 0">
+            <div
+              *ngFor="let asset of currentProject?.assets"
+              class="tree-item asset-item"
+              [title]="asset.relativePath"
+            >
+              <div class="tree-item-left">
+                <span class="asset-type-icon">
+                  <svg *ngIf="isImage(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                    <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
+                  </svg>
+                  <svg *ngIf="isAudio(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                    <path d="M8 2a1 1 0 00-1 1v7.17A2.5 2.5 0 109 12.5V5h3a1 1 0 001-1V3a1 1 0 00-1-1H8z"/>
+                  </svg>
+                  <svg *ngIf="isFont(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                    <path d="M4.5 3h7a.5.5 0 010 1h-3v8.5a.5.5 0 01-1 0V4h-3a.5.5 0 010-1z"/>
+                  </svg>
+                </span>
+                <div class="asset-details">
+                  <span class="item-name">{{ asset.fileName }}</span>
+                  <span class="item-meta">{{ formatBytes(asset.size) }}</span>
+                </div>
+              </div>
+
+              <button
+                class="tree-action-btn delete-btn"
+                (click)="deleteAsset(asset, $event)"
+                title="Delete asset"
+                [disabled]="isUploading"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <div class="assets-empty-hint" *ngIf="(currentProject?.assets?.length || 0) === 0">
+            <span>Drop images/sounds here</span>
+          </div>
+
+          <input
+            #assetInput
+            type="file"
+            multiple
+            accept=".png,.jpg,.jpeg,.bmp,.tga,.psd,.ttf,.otf,.wav,.ogg,.flac"
+            style="display: none"
+            (change)="onFileSelected($event)"
+          />
+
+          <button class="add-file-btn" (click)="assetInput.click()" [disabled]="isUploading">
+            <span *ngIf="!isUploading">+ Upload Asset</span>
+            <span *ngIf="isUploading">Uploading...</span>
+          </button>
+
+          <div class="asset-upload-error" *ngIf="uploadError">
+            <span>{{ uploadError }}</span>
+            <button (click)="uploadError = null">✕</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ─── Center: Multi-File Monaco Editor ─────────────────────────── -->
+    <section class="editor-area">
+      <!-- Tabs Bar -->
+      <div class="tabs-bar">
+        <div class="tabs-scroll">
+          <div
+            *ngFor="let file of currentProject?.files"
+            class="tab-item"
+            [class.active]="activeFile?.id === file.id"
+            (click)="selectFile(file)"
+          >
+            <span class="tab-ext" [class.hpp]="file.path.endsWith('.hpp') || file.path.endsWith('.h')">
+              {{ file.path.endsWith('.hpp') || file.path.endsWith('.h') ? 'H' : 'C++' }}
+            </span>
+            <span class="tab-title">{{ file.path }}</span>
+            <button
+              *ngIf="file.path.toLowerCase() !== 'main.cpp'"
+              class="tab-close"
+              (click)="confirmDeleteFile(file, $event)"
+              title="Delete file"
+            >
+              ✕
             </button>
           </div>
         </div>
 
-        <!-- Empty state -->
-        <div class="assets-empty" *ngIf="assets.length === 0">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-          </svg>
-          <p class="empty-title">No assets uploaded</p>
-          <p class="empty-subtitle">Drag & drop or click below to upload images, sounds, or fonts</p>
-        </div>
-
-        <!-- Upload error if any -->
-        <div class="asset-error" *ngIf="uploadError">
-          <span>{{ uploadError }}</span>
-          <button class="asset-error-dismiss" (click)="uploadError = null">✕</button>
-        </div>
+        <div class="tabs-shortcut-hint">Ctrl+Enter to Run</div>
       </div>
 
-      <!-- Footer action -->
-      <div class="assets-footer">
-        <input
-          #fileInput
-          type="file"
-          id="asset-file-input"
-          multiple
-          accept=".png,.jpg,.jpeg,.bmp,.tga,.psd,.ttf,.otf,.wav,.ogg,.flac"
-          style="display: none"
-          (change)="onFileSelected($event)"
-        />
-        <button
-          id="btn-upload-asset"
-          class="btn btn-upload"
-          (click)="fileInput.click()"
-          [disabled]="isUploading"
-        >
-          <svg *ngIf="!isUploading" class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/>
-          </svg>
-          <span *ngIf="isUploading" class="upload-spinner"></span>
-          <span>{{ isUploading ? 'Uploading...' : '+ Upload Asset' }}</span>
-        </button>
-      </div>
-    </aside>
-
-    <!-- ─── Code Editor Panel ──────────────────────────────────────── -->
-    <section class="panel panel-editor">
-      <div class="panel-header">
-        <div class="panel-tab active">
-          <svg class="tab-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-            <path d="M5.854 4.854a.5.5 0 10-.708-.708l-3.5 3.5a.5.5 0 000 .708l3.5 3.5a.5.5 0 00.708-.708L2.707 8l3.147-3.146zm4.292 0a.5.5 0 01.708-.708l3.5 3.5a.5.5 0 010 .708l-3.5 3.5a.5.5 0 01-.708-.708L13.293 8l-3.147-3.146z"/>
-          </svg>
-          <span>main.cpp</span>
-        </div>
-        <div class="panel-hint">Ctrl+Enter to Run</div>
-      </div>
-      <div class="editor-wrapper" #editorContainer id="editor-container"></div>
+      <!-- Monaco Container -->
+      <div class="editor-viewport" #editorContainer id="editor-container"></div>
     </section>
 
-    <!-- ─── SFML Viewport Panel ────────────────────────────────────── -->
-    <section class="panel panel-viewport">
-      <div class="panel-header">
-        <div class="panel-tab active">
-          <svg class="tab-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+    <!-- ─── Right: Genuine SFML 2.6.2 Output Viewport ────────────────── -->
+    <section class="viewport-area">
+      <div class="viewport-header">
+        <div class="viewport-tab active">
+          <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
             <path d="M0 3.5A1.5 1.5 0 011.5 2h13A1.5 1.5 0 0116 3.5v9a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 010 12.5v-9zM1.5 3a.5.5 0 00-.5.5v9a.5.5 0 00.5.5h13a.5.5 0 00.5-.5v-9a.5.5 0 00-.5-.5h-13z"/>
           </svg>
-          <span>Output</span>
+          <span>SFML 2.6.2 Display</span>
         </div>
       </div>
-      <div class="viewport-wrapper" id="viewport-wrapper" (click)="focusIframe()">
-        <!-- VNC display -->
+
+      <div class="viewport-frame-wrapper" (click)="focusIframe()">
         <iframe
           *ngIf="safeVncUrl"
           #vncFrame
@@ -184,40 +263,224 @@
           allow="keyboard-map; fullscreen"
         ></iframe>
 
-        <!-- Placeholder when not running -->
-        <div class="viewport-placeholder" *ngIf="!safeVncUrl" id="viewport-placeholder">
-          <div class="placeholder-content">
-            <div class="placeholder-icon">
-              <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+        <div class="viewport-idle-screen" *ngIf="!safeVncUrl" id="viewport-placeholder">
+          <div class="idle-card">
+            <div class="idle-icon">
+              <svg width="56" height="56" viewBox="0 0 64 64" fill="none">
                 <rect x="8" y="8" width="48" height="48" rx="8" stroke="var(--border-primary)" stroke-width="2" stroke-dasharray="4 4"/>
-                <path d="M24 22l16 10-16 10V22z" fill="var(--text-tertiary)"/>
+                <path d="M26 22l18 10-18 10V22z" fill="#58a6ff"/>
               </svg>
             </div>
-            <p class="placeholder-text">Run your code to start</p>
-            <p class="placeholder-subtext">Your SFML application will appear here</p>
+            <h3>SFML Application Ready</h3>
+            <p>Click <strong>Run</strong> (or press <strong>Ctrl+Enter</strong>) to compile all files and start the SFML 2.6.2 window.</p>
           </div>
         </div>
       </div>
     </section>
   </main>
 
-  <!-- ─── Terminal Panel ─────────────────────────────────────────────── -->
-  <footer class="panel panel-terminal">
-    <div class="panel-header">
-      <div class="panel-tab active">
-        <svg class="tab-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+  <!-- ─── Bottom Terminal / Compiler Output ────────────────────────── -->
+  <footer class="ide-terminal">
+    <div class="terminal-header">
+      <div class="terminal-tab active">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
           <path d="M6 9a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3A.5.5 0 016 9zM3.854 4.146a.5.5 0 10-.708.708L5.293 7 3.146 9.146a.5.5 0 10.708.708l2.5-2.5a.5.5 0 000-.708l-2.5-2.5z"/>
           <path d="M2 1a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V3a2 2 0 00-2-2H2zm12 1a1 1 0 011 1v10a1 1 0 01-1 1H2a1 1 0 01-1-1V3a1 1 0 011-1h12z"/>
         </svg>
-        <span>Terminal</span>
+        <span>Terminal & Build Output</span>
       </div>
     </div>
-    <div class="terminal-content" id="terminal-content">
+    <div class="terminal-body" id="terminal-content">
       <pre class="terminal-output" *ngIf="terminalOutput" id="terminal-output">{{ terminalOutput }}</pre>
-      <div class="terminal-empty" *ngIf="!terminalOutput" id="terminal-empty">
+      <div class="terminal-idle" *ngIf="!terminalOutput">
         <span class="terminal-prompt">$</span>
         <span class="terminal-cursor"></span>
+        <span class="terminal-placeholder">Ready to compile C++ project...</span>
       </div>
     </div>
   </footer>
+</div>
+
+<!-- ─── MODAL: User Sign-In ─────────────────────────────────────────── -->
+<div class="modal-backdrop" *ngIf="showUserModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>Welcome to SFML Online IDE</h2>
+      <button *ngIf="currentUser" class="modal-close" (click)="showUserModal = false">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-intro">
+        Enter your student username to access your persistent C++ projects and assets.
+      </p>
+      <div class="form-group">
+        <label for="input-username">Username</label>
+        <input
+          id="input-username"
+          type="text"
+          class="form-input"
+          placeholder="e.g. Omar"
+          [(ngModel)]="usernameInput"
+          (keydown.enter)="confirmLogin()"
+          autofocus
+        />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button
+        id="btn-login"
+        class="btn btn-primary"
+        (click)="confirmLogin()"
+        [disabled]="!usernameInput.trim()"
+      >
+        Continue to IDE
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── MODAL: Projects List ────────────────────────────────────────── -->
+<div class="modal-backdrop" *ngIf="showProjectsModal">
+  <div class="modal-card modal-card-lg">
+    <div class="modal-header">
+      <div class="modal-title-row">
+        <h2>My SFML Projects</h2>
+        <span class="user-tag">{{ currentUser?.username }}</span>
+      </div>
+      <button class="modal-close" (click)="showProjectsModal = false">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="projects-grid" *ngIf="projects.length > 0">
+        <div
+          *ngFor="let p of projects"
+          class="project-card"
+          [class.active]="p.id === currentProject?.id"
+          (click)="switchProject(p)"
+        >
+          <div class="project-card-header">
+            <h3 class="card-title">{{ p.name }}</h3>
+            <span class="active-badge" *ngIf="p.id === currentProject?.id">Current</span>
+          </div>
+          <p class="card-desc" *ngIf="p.description">{{ p.description }}</p>
+          <div class="project-card-footer">
+            <span class="meta-item">📄 {{ p.fileCount }} files</span>
+            <span class="meta-item">🖼 {{ p.assetCount }} assets</span>
+            <button
+              class="card-delete-btn"
+              (click)="deleteProject(p, $event)"
+              title="Delete project"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty-projects" *ngIf="projects.length === 0">
+        <p>No projects found. Create your first project to get started!</p>
+      </div>
+    </div>
+
+    <div class="modal-footer modal-footer-split">
+      <button class="btn btn-secondary" (click)="showProjectsModal = false">Cancel</button>
+      <button id="btn-open-new-project" class="btn btn-primary" (click)="openNewProjectModal()">
+        + New Project
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── MODAL: New Project ─────────────────────────────────────────── -->
+<div class="modal-backdrop" *ngIf="showNewProjectModal">
+  <div class="modal-card modal-card-lg">
+    <div class="modal-header">
+      <h2>Create New Project</h2>
+      <button class="modal-close" (click)="showNewProjectModal = false">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="new-project-name">Project Name</label>
+        <input
+          id="new-project-name"
+          type="text"
+          class="form-input"
+          placeholder="e.g. My Space Game"
+          [(ngModel)]="newProjectName"
+          (keydown.enter)="confirmCreateProject()"
+        />
+      </div>
+
+      <div class="form-group">
+        <label>Select Starter Template</label>
+        <div class="template-grid">
+          <div
+            *ngFor="let t of templates"
+            class="template-card"
+            [class.selected]="newProjectTemplate === t.key"
+            (click)="newProjectTemplate = t.key"
+          >
+            <div class="template-card-top">
+              <span class="template-title">{{ t.title }}</span>
+              <span class="template-badge">{{ t.badge }}</span>
+            </div>
+            <p class="template-desc">{{ t.desc }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer modal-footer-split">
+      <button class="btn btn-secondary" (click)="showNewProjectModal = false">Cancel</button>
+      <button
+        id="btn-confirm-create-project"
+        class="btn btn-primary"
+        (click)="confirmCreateProject()"
+      >
+        Create Project
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── MODAL: New File ────────────────────────────────────────────── -->
+<div class="modal-backdrop" *ngIf="showNewFileModal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>New C++ File</h2>
+      <button class="modal-close" (click)="showNewFileModal = false">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="new-file-name">File Name</label>
+        <input
+          id="new-file-name"
+          type="text"
+          class="form-input"
+          placeholder="e.g. Player.hpp or Enemy.cpp"
+          [(ngModel)]="newFileName"
+          (keydown.enter)="confirmCreateFile()"
+          autofocus
+        />
+        <span class="input-hint">Allowed extensions: .cpp, .hpp, .h</span>
+      </div>
+
+      <div class="file-error-alert" *ngIf="fileError">
+        <span>{{ fileError }}</span>
+      </div>
+    </div>
+
+    <div class="modal-footer modal-footer-split">
+      <button class="btn btn-secondary" (click)="showNewFileModal = false">Cancel</button>
+      <button
+        id="btn-confirm-create-file"
+        class="btn btn-primary"
+        (click)="confirmCreateFile()"
+        [disabled]="!newFileName.trim()"
+      >
+        Create File
+      </button>
+    </div>
+  </div>
 </div>

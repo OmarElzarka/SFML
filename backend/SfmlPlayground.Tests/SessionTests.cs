@@ -272,3 +272,199 @@ public class LiveBackendApiTests
         Assert.Equal(HttpStatusCode.NotFound, uploadResp.StatusCode);
     }
 }
+
+public class ProjectAndIdeApiTests
+{
+    private readonly HttpClient _client;
+    private readonly JsonSerializerOptions _jsonOptions;
+
+    public ProjectAndIdeApiTests()
+    {
+        _client = new HttpClient
+        {
+            BaseAddress = new Uri("http://localhost:5000")
+        };
+        _jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+        _jsonOptions.Converters.Add(new JsonStringEnumConverter());
+    }
+
+    [Fact]
+    public async Task User_CreateAndRetrieve_Succeeds()
+    {
+        var username = "TestUser_" + Guid.NewGuid().ToString("N")[..6];
+
+        // 1. Create user
+        var createResp = await _client.PostAsJsonAsync("/api/users", new CreateUserRequest(username));
+        Assert.Equal(HttpStatusCode.OK, createResp.StatusCode);
+
+        var user = await createResp.Content.ReadFromJsonAsync<UserDto>(_jsonOptions);
+        Assert.NotNull(user);
+        Assert.Equal(username, user.Username);
+        Assert.True(user.Id > 0);
+
+        // 2. Retrieve user
+        var getResp = await _client.GetAsync($"/api/users/{username}");
+        Assert.Equal(HttpStatusCode.OK, getResp.StatusCode);
+
+        var retrieved = await getResp.Content.ReadFromJsonAsync<UserDto>(_jsonOptions);
+        Assert.NotNull(retrieved);
+        Assert.Equal(user.Id, retrieved.Id);
+        Assert.Equal(username, retrieved.Username);
+    }
+
+    [Fact]
+    public async Task Project_MultiFileTemplate_CreatesCppAndHppAndAssets()
+    {
+        var username = "Student_" + Guid.NewGuid().ToString("N")[..6];
+        var userResp = await _client.PostAsJsonAsync("/api/users", new CreateUserRequest(username));
+        var user = await userResp.Content.ReadFromJsonAsync<UserDto>(_jsonOptions);
+        Assert.NotNull(user);
+
+        // Create project with sprite template (multi-file)
+        var createReq = new CreateProjectRequest(user.Id, "My Space Game", "Multi-file SFML game", "sprite");
+        var projResp = await _client.PostAsJsonAsync("/api/projects", createReq);
+        Assert.Equal(HttpStatusCode.Created, projResp.StatusCode);
+
+        var project = await projResp.Content.ReadFromJsonAsync<ProjectDetailDto>(_jsonOptions);
+        Assert.NotNull(project);
+        Assert.Equal("My Space Game", project.Name);
+        Assert.True(project.Files.Count >= 3);
+        Assert.Contains(project.Files, f => f.Path == "main.cpp");
+        Assert.Contains(project.Files, f => f.Path == "Player.hpp");
+        Assert.Contains(project.Files, f => f.Path == "Player.cpp");
+        Assert.True(project.Assets.Count >= 1);
+        Assert.Contains(project.Assets, a => a.FileName == "player.png");
+
+        // Verify listing user projects
+        var listResp = await _client.GetAsync($"/api/projects?userId={user.Id}");
+        Assert.Equal(HttpStatusCode.OK, listResp.StatusCode);
+        var summaries = await listResp.Content.ReadFromJsonAsync<List<ProjectSummaryDto>>(_jsonOptions);
+        Assert.NotNull(summaries);
+        Assert.Single(summaries);
+        Assert.Equal(project.Id, summaries[0].Id);
+    }
+
+    [Fact]
+    public async Task ProjectFiles_AddUpdateDelete_WorksCorrectly()
+    {
+        var username = "Coder_" + Guid.NewGuid().ToString("N")[..6];
+        var userResp = await _client.PostAsJsonAsync("/api/users", new CreateUserRequest(username));
+        var user = await userResp.Content.ReadFromJsonAsync<UserDto>(_jsonOptions);
+        Assert.NotNull(user);
+
+        var createReq = new CreateProjectRequest(user.Id, "Custom Files Project", null, "empty");
+        var projResp = await _client.PostAsJsonAsync("/api/projects", createReq);
+        var project = await projResp.Content.ReadFromJsonAsync<ProjectDetailDto>(_jsonOptions);
+        Assert.NotNull(project);
+
+        // Add Enemy.hpp
+        var addFileReq = new CreateFileRequest("Enemy.hpp", "#pragma once\nclass Enemy {};");
+        var addResp = await _client.PostAsJsonAsync($"/api/projects/{project.Id}/files", addFileReq);
+        Assert.Equal(HttpStatusCode.Created, addResp.StatusCode);
+        var addedFile = await addResp.Content.ReadFromJsonAsync<ProjectFileDto>(_jsonOptions);
+        Assert.NotNull(addedFile);
+        Assert.Equal("Enemy.hpp", addedFile.Path);
+
+        // Update Enemy.hpp
+        var updateReq = new UpdateFileRequest("#pragma once\nclass Enemy { int hp = 100; };");
+        var updateResp = await _client.PutAsJsonAsync($"/api/projects/{project.Id}/files/{addedFile.Id}", updateReq);
+        Assert.Equal(HttpStatusCode.OK, updateResp.StatusCode);
+        var updatedFile = await updateResp.Content.ReadFromJsonAsync<ProjectFileDto>(_jsonOptions);
+        Assert.NotNull(updatedFile);
+        Assert.Contains("hp = 100", updatedFile.Content);
+
+        // Delete Enemy.hpp
+        var deleteResp = await _client.DeleteAsync($"/api/projects/{project.Id}/files/{addedFile.Id}");
+        Assert.Equal(HttpStatusCode.OK, deleteResp.StatusCode);
+
+        // Verify it's gone
+        var detailResp = await _client.GetAsync($"/api/projects/{project.Id}");
+        var finalProject = await detailResp.Content.ReadFromJsonAsync<ProjectDetailDto>(_jsonOptions);
+        Assert.NotNull(finalProject);
+        Assert.DoesNotContain(finalProject.Files, f => f.Path == "Enemy.hpp");
+    }
+
+    [Fact]
+    public async Task ProjectAssets_UploadAndDelete_WorksCorrectly()
+    {
+        var username = "Artist_" + Guid.NewGuid().ToString("N")[..6];
+        var userResp = await _client.PostAsJsonAsync("/api/users", new CreateUserRequest(username));
+        var user = await userResp.Content.ReadFromJsonAsync<UserDto>(_jsonOptions);
+        Assert.NotNull(user);
+
+        var createReq = new CreateProjectRequest(user.Id, "Asset Test Project", null, "empty");
+        var projResp = await _client.PostAsJsonAsync("/api/projects", createReq);
+        var project = await projResp.Content.ReadFromJsonAsync<ProjectDetailDto>(_jsonOptions);
+        Assert.NotNull(project);
+
+        // Upload asset
+        using var form = new MultipartFormDataContent();
+        var fakePng = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02, 0x03 };
+        form.Add(new ByteArrayContent(fakePng), "file", "enemy.png");
+
+        var uploadResp = await _client.PostAsync($"/api/projects/{project.Id}/assets", form);
+        Assert.Equal(HttpStatusCode.OK, uploadResp.StatusCode);
+        var asset = await uploadResp.Content.ReadFromJsonAsync<ProjectAssetDto>(_jsonOptions);
+        Assert.NotNull(asset);
+        Assert.Equal("enemy.png", asset.FileName);
+        Assert.Equal("assets/enemy.png", asset.RelativePath);
+
+        // Delete asset
+        var deleteResp = await _client.DeleteAsync($"/api/projects/{project.Id}/assets/{asset.Id}");
+        Assert.Equal(HttpStatusCode.OK, deleteResp.StatusCode);
+
+        // Verify asset removed
+        var detailResp = await _client.GetAsync($"/api/projects/{project.Id}");
+        var finalProject = await detailResp.Content.ReadFromJsonAsync<ProjectDetailDto>(_jsonOptions);
+        Assert.NotNull(finalProject);
+        Assert.DoesNotContain(finalProject.Assets, a => a.FileName == "enemy.png");
+    }
+
+    [Fact]
+    public async Task ProjectRun_MultiFileProject_ExecutesSuccessfully()
+    {
+        var username = "Runner_" + Guid.NewGuid().ToString("N")[..6];
+        var userResp = await _client.PostAsJsonAsync("/api/users", new CreateUserRequest(username));
+        var user = await userResp.Content.ReadFromJsonAsync<UserDto>(_jsonOptions);
+        Assert.NotNull(user);
+
+        // Create multi-file sprite template project
+        var createReq = new CreateProjectRequest(user.Id, "Execution Test Project", null, "sprite");
+        var projResp = await _client.PostAsJsonAsync("/api/projects", createReq);
+        var project = await projResp.Content.ReadFromJsonAsync<ProjectDetailDto>(_jsonOptions);
+        Assert.NotNull(project);
+
+        // Run the multi-file project
+        var runResp = await _client.PostAsJsonAsync($"/api/projects/{project.Id}/run", new RunProjectRequest());
+        Assert.Equal(HttpStatusCode.OK, runResp.StatusCode);
+
+        var sessionResp = await runResp.Content.ReadFromJsonAsync<SessionResponse>(_jsonOptions);
+        Assert.NotNull(sessionResp);
+        Assert.False(string.IsNullOrWhiteSpace(sessionResp.SessionId));
+
+        // Poll for session to compile and run
+        var maxWait = TimeSpan.FromSeconds(30);
+        var start = DateTime.UtcNow;
+        SessionResponse? current = sessionResp;
+
+        while (DateTime.UtcNow - start < maxWait && current?.Status != SessionStatus.Running && current?.Status != SessionStatus.CompileError && current?.Status != SessionStatus.Error)
+        {
+            await Task.Delay(1000);
+            var pollResp = await _client.GetAsync($"/api/sessions/{sessionResp.SessionId}");
+            if (pollResp.IsSuccessStatusCode)
+            {
+                current = await pollResp.Content.ReadFromJsonAsync<SessionResponse>(_jsonOptions);
+            }
+        }
+
+        Assert.NotNull(current);
+        Assert.Equal(SessionStatus.Running, current.Status);
+        Assert.Contains("Compilation successful", current.CompilerOutput);
+
+        // Stop session cleanly
+        await _client.PostAsync($"/api/sessions/{sessionResp.SessionId}/stop", null);
+    }
+}

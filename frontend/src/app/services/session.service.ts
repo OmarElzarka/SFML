@@ -169,6 +169,46 @@ export class SessionService {
       });
   }
 
+  runProject(projectId: number): void {
+    this._isLoading.next(true);
+    this._displayInfo.next(null);
+
+    const currentSessionId = this._session.value?.sessionId;
+    this.http
+      .post<SessionResponse>(`${this.apiUrl}/projects/${projectId}/run`, {
+        sessionId: currentSessionId || undefined,
+      })
+      .subscribe({
+        next: (response) => {
+          this._session.next(response);
+          this._isLoading.next(false);
+          if (response.assets) {
+            this._assets.next(response.assets);
+          }
+
+          if (response.status === 'Running') {
+            this.fetchDisplayInfo(response.sessionId);
+            this.startHeartbeat(response.sessionId);
+          } else if (
+            response.status === 'Compiling' ||
+            response.status === 'Starting'
+          ) {
+            this.pollUntilReady(response.sessionId);
+          }
+        },
+        error: (err) => {
+          this._isLoading.next(false);
+          this._session.next({
+            sessionId: currentSessionId || '',
+            status: 'Error',
+            errorMessage:
+              err.error?.error || 'Failed to connect to the server.',
+            createdAt: new Date().toISOString(),
+          });
+        },
+      });
+  }
+
   private pollUntilReady(sessionId: string): void {
     const poll = interval(1000)
       .pipe(

@@ -17,10 +17,27 @@ if [ ! -f "${SOURCE_FILE}" ]; then
     exit 1
 fi
 
+# Find all .cpp files in /workspace
+WORKSPACE_DIR="/workspace"
+CPP_FILES=""
+if [ -d "${WORKSPACE_DIR}" ]; then
+    # Collect all .cpp files under /workspace
+    CPP_FILES=$(find "${WORKSPACE_DIR}" -type f -name "*.cpp" 2>/dev/null | tr '\n' ' ')
+fi
+
+if [ -z "${CPP_FILES}" ]; then
+    CPP_FILES="${SOURCE_FILE}"
+fi
+
+echo "Compiling C++ sources: ${CPP_FILES}"
+
 # Compile with SFML 2.6.2 libraries
-g++ "${SOURCE_FILE}" \
+g++ ${CPP_FILES} \
     -std=c++17 \
     -o "${OUTPUT_FILE}" \
+    -I/workspace \
+    -I/workspace/src \
+    -I/workspace/include \
     -I/usr/local/include \
     -L/usr/local/lib \
     -lsfml-graphics \
@@ -31,3 +48,4 @@ g++ "${SOURCE_FILE}" \
     -Wl,-rpath,/usr/local/lib
 
 echo "Compilation successful."
+

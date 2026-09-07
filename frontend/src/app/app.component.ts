@@ -1,96 +1,48 @@
 import { Component, ViewChild, ElementRef, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { SessionService, SessionResponse, DisplayInfo, AssetInfo } from './services/session.service';
 import { Subscription } from 'rxjs';
+import {
+  ProjectService,
+  UserDto,
+  ProjectDetailDto,
+  ProjectSummaryDto,
+  ProjectFileDto,
+  ProjectAssetDto,
+} from './services/project.service';
+import { SessionService, SessionResponse, DisplayInfo } from './services/session.service';
 
 declare const monaco: any;
-
-const DEFAULT_CODE = `#include <SFML/Graphics.hpp>
-
-int main()
-{
-    // Create an interactive SFML window
-    // Features: draggable title bar to slide, border dragging to resize,
-    // [X] to close, [□] to maximize, and keyboard/mouse interaction!
-    sf::RenderWindow window(sf::VideoMode(640, 480), "SFML Playground");
-    window.setFramerateLimit(60);
-
-    // Create an interactive player circle
-    sf::CircleShape player(40.f);
-    player.setFillColor(sf::Color(88, 166, 255));
-    player.setOutlineThickness(3.f);
-    player.setOutlineColor(sf::Color::White);
-    player.setOrigin(40.f, 40.f);
-    player.setPosition(320.f, 240.f);
-
-    while (window.isOpen())
-    {
-        sf::Event event;
-        while (window.pollEvent(event))
-        {
-            // Close window when [X] icon is clicked or Alt+F4
-            if (event.type == sf::Event::Closed)
-                window.close();
-
-            // Adjust viewport when window is resized (bigger / smaller)
-            if (event.type == sf::Event::Resized)
-            {
-                sf::FloatRect visibleArea(0, 0, (float)event.size.width, (float)event.size.height);
-                window.setView(sf::View(visibleArea));
-            }
-
-            // Mouse interaction: click anywhere to jump player there
-            if (event.type == sf::Event::MouseButtonPressed)
-            {
-                player.setPosition((float)event.mouseButton.x, (float)event.mouseButton.y);
-                player.setFillColor(sf::Color(255, 123, 114)); // Change color on click
-            }
-            if (event.type == sf::Event::MouseButtonReleased)
-            {
-                player.setFillColor(sf::Color(88, 166, 255));
-            }
-        }
-
-        // Keyboard interaction: Arrow keys or WASD to move player
-        float speed = 4.0f;
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left) || sf::Keyboard::isKeyPressed(sf::Keyboard::A))
-            player.move(-speed, 0.f);
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right) || sf::Keyboard::isKeyPressed(sf::Keyboard::D))
-            player.move(speed, 0.f);
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up) || sf::Keyboard::isKeyPressed(sf::Keyboard::W))
-            player.move(0.f, -speed);
-        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down) || sf::Keyboard::isKeyPressed(sf::Keyboard::S))
-            player.move(0.f, speed);
-
-        window.clear(sf::Color(22, 27, 34));
-        window.draw(player);
-        window.display();
-    }
-
-    return 0;
-}
-`;
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
 export class AppComponent implements OnInit, OnDestroy {
-  @ViewChild('editorContainer', { static: true })
-  editorContainer!: ElementRef<HTMLDivElement>;
+  @ViewChild('editorContainer', { static: false })
+  editorContainer?: ElementRef<HTMLDivElement>;
   @ViewChild('vncFrame', { static: false })
   vncFrame?: ElementRef<HTMLIFrameElement>;
 
   private editor: any;
+  private fileModels = new Map<number, any>();
   private subs: Subscription[] = [];
+  private saveTimeout: any = null;
 
+  // State from ProjectService
+  currentUser: UserDto | null = null;
+  projects: ProjectSummaryDto[] = [];
+  currentProject: ProjectDetailDto | null = null;
+  activeFile: ProjectFileDto | null = null;
+  saveStatus: 'saved' | 'saving' | 'unsaved' = 'saved';
+
+  // State from SessionService
   session: SessionResponse | null = null;
   displayInfo: DisplayInfo | null = null;
-  assets: AssetInfo[] = [];
   isLoading = false;
   isUploading = false;
   uploadError: string | null = null;
@@ -99,26 +51,97 @@ export class AppComponent implements OnInit, OnDestroy {
   vncUrl: string | null = null;
   safeVncUrl: SafeResourceUrl | null = null;
 
+  // Modals
+  showUserModal = false;
+  showProjectsModal = false;
+  showNewProjectModal = false;
+  showNewFileModal = false;
+
+  usernameInput = '';
+  newProjectName = '';
+  newProjectTemplate = 'sprite';
+  newFileName = '';
+  fileError: string | null = null;
+
+  templates = [
+    {
+      key: 'sprite',
+      title: 'Texture & Sprite (Multi-File)',
+      desc: 'Multi-file project (main.cpp, Player.hpp, Player.cpp) with spaceship sprite and keyboard movement',
+      badge: 'Recommended',
+    },
+    {
+      key: 'shapes',
+      title: 'Shapes & Drawing',
+      desc: 'Geometric primitives (circles, rectangles) with smooth rotation animations',
+      badge: 'Beginner',
+    },
+    {
+      key: 'ball',
+      title: 'Bouncing Ball (Multi-File)',
+      desc: 'Modular physics ball bouncing with boundary detection in Ball.hpp and Ball.cpp',
+      badge: 'Game Math',
+    },
+    {
+      key: 'empty',
+      title: 'Empty SFML Project',
+      desc: 'Minimal clean SFML window starter ready for custom code',
+      badge: 'Clean Slate',
+    },
+  ];
+
   constructor(
+    public projectService: ProjectService,
     public sessionService: SessionService,
     private sanitizer: DomSanitizer
   ) {}
 
   ngOnInit(): void {
-    this.initMonaco();
-
     this.subs.push(
+      this.projectService.currentUser$.subscribe((u) => {
+        this.currentUser = u;
+        if (!u) {
+          this.showUserModal = true;
+        } else {
+          this.showUserModal = false;
+        }
+      }),
+
+      this.projectService.projects$.subscribe((p) => {
+        this.projects = p;
+      }),
+
+      this.projectService.currentProject$.subscribe((p) => {
+        const prevId = this.currentProject?.id;
+        this.currentProject = p;
+        if (p && p.id !== prevId) {
+          this.fileModels.clear();
+          // Stop any active runner when switching projects
+          if (this.isRunning) {
+            this.stop();
+          }
+        }
+      }),
+
+      this.projectService.activeFile$.subscribe((f) => {
+        this.activeFile = f;
+        if (f && this.editor) {
+          this.switchToFileModel(f);
+        }
+      }),
+
+      this.projectService.saveStatus$.subscribe((s) => {
+        this.saveStatus = s;
+      }),
+
       this.sessionService.session$.subscribe((s) => {
         this.session = s;
         this.updateTerminalOutput();
       }),
-      this.sessionService.assets$.subscribe((a) => {
-        this.assets = a;
-      }),
+
       this.sessionService.displayInfo$.subscribe((d) => {
         this.displayInfo = d;
         if (d) {
-          // Build noVNC URL: connect to websockify using minimal lite client
           this.vncUrl = `http://${d.host}:${d.port}/vnc_lite.html?scale=true`;
           this.safeVncUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.vncUrl);
         } else {
@@ -126,26 +149,30 @@ export class AppComponent implements OnInit, OnDestroy {
           this.safeVncUrl = null;
         }
       }),
+
       this.sessionService.isLoading$.subscribe((l) => (this.isLoading = l))
     );
+
+    this.initMonaco();
   }
 
   ngOnDestroy(): void {
     this.subs.forEach((s) => s.unsubscribe());
+    if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.editor?.dispose();
+    this.fileModels.clear();
   }
 
+  // ─── Monaco Editor Setup ──────────────────────────────────────────────────
+
   private initMonaco(): void {
-    // Check if Monaco is already loaded
     if (typeof (window as any).monaco !== 'undefined') {
       this.createEditor();
       return;
     }
 
-    // Load Monaco from CDN
     const script = document.createElement('script');
-    script.src =
-      'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js';
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js';
     script.onload = () => {
       (window as any).require.config({
         paths: {
@@ -160,12 +187,16 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   private createEditor(): void {
-    // Define custom dark theme
-    monaco.editor.defineTheme('sfml-dark', {
+    if (!this.editorContainer?.nativeElement) {
+      setTimeout(() => this.createEditor(), 50);
+      return;
+    }
+
+    monaco.editor.defineTheme('sfml-ide-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'comment', foreground: '6e7681', fontStyle: 'italic' },
+        { token: 'comment', foreground: '7d8590', fontStyle: 'italic' },
         { token: 'keyword', foreground: 'ff7b72' },
         { token: 'string', foreground: 'a5d6ff' },
         { token: 'number', foreground: '79c0ff' },
@@ -176,7 +207,7 @@ export class AppComponent implements OnInit, OnDestroy {
       colors: {
         'editor.background': '#0d1117',
         'editor.foreground': '#e6edf3',
-        'editor.lineHighlightBackground': '#161b2299',
+        'editor.lineHighlightBackground': '#161b2280',
         'editorCursor.foreground': '#58a6ff',
         'editor.selectionBackground': '#264f7888',
         'editorLineNumber.foreground': '#6e7681',
@@ -188,9 +219,7 @@ export class AppComponent implements OnInit, OnDestroy {
     });
 
     this.editor = monaco.editor.create(this.editorContainer.nativeElement, {
-      value: DEFAULT_CODE,
-      language: 'cpp',
-      theme: 'sfml-dark',
+      theme: 'sfml-ide-dark',
       fontSize: 14,
       fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
       fontLigatures: true,
@@ -199,11 +228,8 @@ export class AppComponent implements OnInit, OnDestroy {
       scrollBeyondLastLine: false,
       automaticLayout: true,
       bracketPairColorization: { enabled: true },
-      guides: {
-        bracketPairs: true,
-        indentation: true,
-      },
-      padding: { top: 16, bottom: 16 },
+      guides: { bracketPairs: true, indentation: true },
+      padding: { top: 14, bottom: 14 },
       renderLineHighlight: 'all',
       smoothScrolling: true,
       cursorBlinking: 'smooth',
@@ -213,35 +239,209 @@ export class AppComponent implements OnInit, OnDestroy {
       wordWrap: 'off',
       overviewRulerBorder: false,
       hideCursorInOverviewRuler: true,
-      renderWhitespace: 'none',
       contextmenu: true,
     });
 
-    // Ctrl+Enter → Run
+    // Run shortcut Ctrl+Enter
     this.editor.addAction({
       id: 'run-code',
-      label: 'Run Code',
+      label: 'Run SFML Project',
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
       run: () => this.run(),
     });
 
-    // Ctrl+S → prevent browser save
+    // Ctrl+S -> save immediately
     this.editor.addAction({
-      id: 'save-prevent',
-      label: 'Save (disabled)',
+      id: 'save-code',
+      label: 'Save File',
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-      run: () => {
-        /* no-op */
+      run: () => this.saveCurrentFileNow(),
+    });
+
+    if (this.activeFile) {
+      this.switchToFileModel(this.activeFile);
+    }
+  }
+
+  private switchToFileModel(file: ProjectFileDto): void {
+    if (!this.editor) return;
+
+    let model = this.fileModels.get(file.id);
+    if (!model) {
+      const uri = monaco.Uri.parse(`file:///${file.path}`);
+      const existing = monaco.editor.getModel(uri);
+      if (existing) existing.dispose();
+
+      model = monaco.editor.createModel(file.content, 'cpp', uri);
+
+      model.onDidChangeContent(() => {
+        if (this.activeFile?.id === file.id) {
+          this.saveStatus = 'unsaved';
+          if (this.saveTimeout) clearTimeout(this.saveTimeout);
+          this.saveTimeout = setTimeout(() => {
+            this.saveCurrentFileNow();
+          }, 800);
+        }
+      });
+
+      this.fileModels.set(file.id, model);
+    }
+
+    this.editor.setModel(model);
+  }
+
+  private saveCurrentFileNow(): void {
+    if (!this.currentProject || !this.activeFile || !this.editor) return;
+    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+
+    const content = this.editor.getValue();
+    this.saveStatus = 'saving';
+    this.projectService.updateFile(this.currentProject.id, this.activeFile.id, content).subscribe({
+      next: () => {
+        this.saveStatus = 'saved';
+      },
+      error: (err) => {
+        console.error('Failed to save file:', err);
+        this.saveStatus = 'unsaved';
       },
     });
   }
 
+  // ─── File Navigation & Tabs ───────────────────────────────────────────────
+
+  selectFile(file: ProjectFileDto): void {
+    if (this.activeFile?.id === file.id) return;
+    this.saveCurrentFileNow();
+    this.projectService.setActiveFile(file);
+  }
+
+  openNewFileModal(): void {
+    this.newFileName = '';
+    this.fileError = null;
+    this.showNewFileModal = true;
+  }
+
+  confirmCreateFile(): void {
+    if (!this.currentProject) return;
+    const name = this.newFileName.trim();
+    if (!name) {
+      this.fileError = 'Filename cannot be empty.';
+      return;
+    }
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (ext !== 'cpp' && ext !== 'hpp' && ext !== 'h') {
+      this.fileError = 'File must have .cpp, .hpp, or .h extension.';
+      return;
+    }
+    if (this.currentProject.files.some((f) => f.path.toLowerCase() === name.toLowerCase())) {
+      this.fileError = `A file named '${name}' already exists in this project.`;
+      return;
+    }
+
+    const starter = ext === 'hpp' || ext === 'h' ? '#pragma once\n\n' : '#include <SFML/Graphics.hpp>\n\n';
+
+    this.projectService.createFile(this.currentProject.id, name, starter).subscribe({
+      next: () => {
+        this.showNewFileModal = false;
+        this.newFileName = '';
+      },
+      error: (err) => {
+        this.fileError = err.error?.error || 'Failed to create file.';
+      },
+    });
+  }
+
+  confirmDeleteFile(file: ProjectFileDto, event: MouseEvent): void {
+    event.stopPropagation();
+    if (!this.currentProject) return;
+    if (file.path.toLowerCase() === 'main.cpp') {
+      alert('main.cpp is the primary entry point and cannot be deleted.');
+      return;
+    }
+    if (confirm(`Delete ${file.path}?`)) {
+      this.fileModels.get(file.id)?.dispose();
+      this.fileModels.delete(file.id);
+      this.projectService.deleteFile(this.currentProject.id, file.id).subscribe();
+    }
+  }
+
+  // ─── Project Management ───────────────────────────────────────────────────
+
+  openProjectsModal(): void {
+    if (this.currentUser) {
+      this.projectService.loadProjects(this.currentUser.id).subscribe();
+    }
+    this.showProjectsModal = true;
+  }
+
+  openNewProjectModal(): void {
+    this.newProjectName = '';
+    this.newProjectTemplate = 'sprite';
+    this.showProjectsModal = false;
+    this.showNewProjectModal = true;
+  }
+
+  confirmCreateProject(): void {
+    if (!this.currentUser) return;
+    const name = this.newProjectName.trim() || 'My SFML Game';
+    this.projectService.createProject(this.currentUser.id, name, this.newProjectTemplate).subscribe({
+      next: () => {
+        this.showNewProjectModal = false;
+      },
+      error: (err) => {
+        alert(err.error?.error || 'Failed to create project.');
+      },
+    });
+  }
+
+  switchProject(p: ProjectSummaryDto): void {
+    if (this.currentProject?.id === p.id) {
+      this.showProjectsModal = false;
+      return;
+    }
+    this.saveCurrentFileNow();
+    this.projectService.loadProject(p.id).subscribe({
+      next: () => {
+        this.showProjectsModal = false;
+      },
+    });
+  }
+
+  deleteProject(p: ProjectSummaryDto, event: MouseEvent): void {
+    event.stopPropagation();
+    if (confirm(`Delete project '${p.name}'? All files and assets will be permanently removed.`)) {
+      this.projectService.deleteProject(p.id).subscribe();
+    }
+  }
+
+  // ─── User Profile ─────────────────────────────────────────────────────────
+
+  confirmLogin(): void {
+    const username = this.usernameInput.trim();
+    if (!username) return;
+    this.projectService.login(username).subscribe({
+      next: () => {
+        this.showUserModal = false;
+        this.usernameInput = '';
+      },
+      error: (err) => {
+        alert(err.error?.error || 'Login failed.');
+      },
+    });
+  }
+
+  changeUser(): void {
+    this.usernameInput = this.currentUser?.username || '';
+    this.showUserModal = true;
+  }
+
+  // ─── Execution ────────────────────────────────────────────────────────────
+
   run(): void {
-    if (this.isLoading || this.isRunning) return;
-    const code = this.editor?.getValue() || '';
-    if (!code.trim()) return;
+    if (this.isLoading || this.isRunning || !this.currentProject) return;
+    this.saveCurrentFileNow();
     this.terminalOutput = '';
-    this.sessionService.createSession(code);
+    this.sessionService.runProject(this.currentProject.id);
   }
 
   stop(): void {
@@ -256,7 +456,7 @@ export class AppComponent implements OnInit, OnDestroy {
       try {
         this.vncFrame.nativeElement.contentWindow?.focus();
       } catch {
-        /* cross-origin safely ignored */
+        /* safely ignored */
       }
     }
   }
@@ -268,38 +468,33 @@ export class AppComponent implements OnInit, OnDestroy {
     }
 
     const lines: string[] = [];
-
     switch (this.session.status) {
       case 'Starting':
-        lines.push('⏳ Starting execution environment...');
+        lines.push('⏳ Starting isolated Docker sandbox...');
         break;
       case 'Compiling':
-        lines.push('🔨 Compiling...');
+        lines.push('🔨 Compiling all project C++ sources with G++ 11...');
         break;
       case 'CompileError':
-        lines.push('❌ Compilation failed\n');
-        if (this.session.compilerOutput)
-          lines.push(this.session.compilerOutput);
+        lines.push('❌ Compilation Failed:\n');
+        if (this.session.compilerOutput) lines.push(this.session.compilerOutput);
         break;
       case 'Running':
-        lines.push('✅ Compilation successful');
-        lines.push('🖥️  Application is running');
+        lines.push('✅ Multi-file C++ build succeeded');
+        lines.push('🖥️  SFML 2.6.2 window active via Xvfb + noVNC');
         break;
       case 'Stopped':
-        lines.push('⏹️  Application stopped');
+        lines.push('⏹️  Execution session stopped');
         break;
       case 'TimedOut':
         lines.push('⏱️  Execution timed out');
         break;
       case 'Error':
-        lines.push('❌ Error');
-        if (this.session.errorMessage)
-          lines.push('\n' + this.session.errorMessage);
-        if (this.session.compilerOutput)
-          lines.push('\n' + this.session.compilerOutput);
+        lines.push('❌ Execution Error');
+        if (this.session.errorMessage) lines.push('\n' + this.session.errorMessage);
+        if (this.session.compilerOutput) lines.push('\n' + this.session.compilerOutput);
         break;
     }
-
     this.terminalOutput = lines.join('\n');
   }
 
@@ -346,9 +541,11 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
+  // ─── Assets ───────────────────────────────────────────────────────────────
+
   onFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
-    if (!input.files || input.files.length === 0) return;
+    if (!input.files || input.files.length === 0 || !this.currentProject) return;
     this.uploadFiles(Array.from(input.files));
     input.value = '';
   }
@@ -369,18 +566,19 @@ export class AppComponent implements OnInit, OnDestroy {
     event.preventDefault();
     event.stopPropagation();
     this.isDraggingOver = false;
-    if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
+    if (event.dataTransfer?.files && event.dataTransfer.files.length > 0 && this.currentProject) {
       this.uploadFiles(Array.from(event.dataTransfer.files));
     }
   }
 
   private uploadFiles(files: File[]): void {
+    if (!this.currentProject) return;
     this.uploadError = null;
     this.isUploading = true;
 
     let uploadedCount = 0;
     files.forEach((file) => {
-      this.sessionService.uploadAsset(file).subscribe({
+      this.projectService.uploadAsset(this.currentProject!.id, file).subscribe({
         next: () => {
           uploadedCount++;
           if (uploadedCount === files.length) {
@@ -395,13 +593,16 @@ export class AppComponent implements OnInit, OnDestroy {
     });
   }
 
-  deleteAsset(assetName: string): void {
-    this.uploadError = null;
-    this.sessionService.deleteAsset(assetName).subscribe({
-      error: (err) => {
-        this.uploadError = err.error?.error || `Failed to delete ${assetName}`;
-      },
-    });
+  deleteAsset(asset: ProjectAssetDto, event: MouseEvent): void {
+    event.stopPropagation();
+    if (!this.currentProject) return;
+    if (confirm(`Delete asset '${asset.fileName}'?`)) {
+      this.projectService.deleteAsset(this.currentProject.id, asset.id).subscribe({
+        error: (err) => {
+          this.uploadError = err.error?.error || `Failed to delete ${asset.fileName}`;
+        },
+      });
+    }
   }
 
   formatBytes(bytes: number): string {

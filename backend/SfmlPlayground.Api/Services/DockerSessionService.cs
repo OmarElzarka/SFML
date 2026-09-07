@@ -17,7 +17,7 @@ public class DockerSessionService : IDisposable
     private readonly ILogger<DockerSessionService> _logger;
     private readonly IConfiguration _config;
     private const string ImageName = "sfml-sandbox:latest";
-    private const int MaxSessions = 10;
+    private const int MaxSessions = 50;
     private static readonly TimeSpan SessionTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CompileTimeout = TimeSpan.FromSeconds(30);
 
@@ -49,13 +49,33 @@ public class DockerSessionService : IDisposable
             : new DockerClientConfiguration(new Uri(dockerHost)).CreateClient();
     }
 
+    private void EnsureSessionCapacity()
+    {
+        if (_sessions.Count >= MaxSessions)
+        {
+            // Prune any stopped, error, or idle ready sessions
+            var removable = _sessions.Values
+                .Where(s => s.Status == SessionStatus.Stopped ||
+                            s.Status == SessionStatus.Error ||
+                            (s.Status == SessionStatus.Ready && DateTime.UtcNow - s.CreatedAt > TimeSpan.FromMinutes(1)))
+                .ToList();
+
+            foreach (var s in removable)
+            {
+                _sessions.TryRemove(s.Id, out _);
+            }
+
+            if (_sessions.Count >= MaxSessions)
+                throw new InvalidOperationException("Maximum number of concurrent sessions reached. Please try again later.");
+        }
+    }
+
     /// <summary>
     /// Initializes an empty session and its workspace directory without starting Docker yet.
     /// </summary>
     public Session InitializeSession()
     {
-        if (_sessions.Count >= MaxSessions)
-            throw new InvalidOperationException("Maximum number of concurrent sessions reached. Please try again later.");
+        EnsureSessionCapacity();
 
         var sessionId = Guid.NewGuid().ToString("N")[..12];
         var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
@@ -95,8 +115,7 @@ public class DockerSessionService : IDisposable
         }
         else
         {
-            if (_sessions.Count >= MaxSessions)
-                throw new InvalidOperationException("Maximum number of concurrent sessions reached. Please try again later.");
+            EnsureSessionCapacity();
 
             var sessionId = Guid.NewGuid().ToString("N")[..12];
             var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
@@ -127,7 +146,7 @@ public class DockerSessionService : IDisposable
 
         try
         {
-            await StartContainerAsync(session, ct);
+            await StartContainerAsync(session, (s, c) => CopySourceToContainerAsync(s, c), ct);
             return session;
         }
         catch (Exception ex)
@@ -139,7 +158,84 @@ public class DockerSessionService : IDisposable
         }
     }
 
-    private async Task StartContainerAsync(Session session, CancellationToken ct)
+    /// <summary>
+    /// Creates or starts an execution session for a multi-file project with persistent assets.
+    /// </summary>
+    public async Task<Session> CreateProjectSessionAsync(
+        IEnumerable<ProjectFile> files,
+        IEnumerable<ProjectAsset> assets,
+        string? existingSessionId = null,
+        CancellationToken ct = default)
+    {
+        var fileList = files.ToList();
+        var mainFile = fileList.FirstOrDefault(f => string.Equals(f.Path, "main.cpp", StringComparison.OrdinalIgnoreCase))
+            ?? fileList.FirstOrDefault(f => f.Path.EndsWith(".cpp", StringComparison.OrdinalIgnoreCase))
+            ?? fileList.FirstOrDefault();
+        var sourceCode = mainFile?.Content ?? string.Empty;
+
+        Session session;
+        if (!string.IsNullOrWhiteSpace(existingSessionId) && _sessions.TryGetValue(existingSessionId, out var existing))
+        {
+            session = existing;
+            session.SourceCode = sourceCode;
+            session.LastHeartbeat = DateTime.UtcNow;
+
+            if (!string.IsNullOrEmpty(session.ContainerId))
+            {
+                await StopContainerInternalAsync(session.ContainerId);
+                session.ContainerId = string.Empty;
+            }
+        }
+        else
+        {
+            EnsureSessionCapacity();
+
+            var sessionId = Guid.NewGuid().ToString("N")[..12];
+            var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
+            Directory.CreateDirectory(workspacePath);
+
+            session = new Session
+            {
+                Id = sessionId,
+                SourceCode = sourceCode,
+                Status = SessionStatus.Starting,
+                WorkspacePath = workspacePath
+            };
+
+            _sessions[sessionId] = session;
+            _logger.LogInformation("Session {SessionId}: Created for project", sessionId);
+        }
+
+        if (string.IsNullOrEmpty(session.WorkspacePath))
+        {
+            session.WorkspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", session.Id, "workspace");
+            Directory.CreateDirectory(session.WorkspacePath);
+        }
+
+        session.Status = SessionStatus.Starting;
+        session.ErrorMessage = null;
+        session.CompilerOutput = string.Empty;
+        session.RuntimeOutput = string.Empty;
+
+        var assetList = assets.ToList();
+        try
+        {
+            await StartContainerAsync(session, (s, c) => CopyProjectToContainerAsync(s, fileList, assetList, c), ct);
+            return session;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Session {SessionId}: Failed to start project container", session.Id);
+            session.Status = SessionStatus.Error;
+            session.ErrorMessage = $"Failed to start execution environment: {ex.Message}";
+            return session;
+        }
+    }
+
+    private async Task StartContainerAsync(
+        Session session,
+        Func<Session, CancellationToken, Task> copyWorkspaceAsync,
+        CancellationToken ct)
     {
         session.Status = SessionStatus.Compiling;
 
@@ -197,8 +293,8 @@ public class DockerSessionService : IDisposable
         session.ContainerId = createResponse.ID;
         _logger.LogInformation("Session {SessionId}: Container created {ContainerId}", session.Id, session.ContainerId[..12]);
 
-        // Copy source code into the container
-        await CopySourceToContainerAsync(session, ct);
+        // Copy source code / project files into the container
+        await copyWorkspaceAsync(session, ct);
 
         // Start the container
         await _docker.Containers.StartContainerAsync(session.ContainerId, new ContainerStartParameters(), ct);
@@ -229,6 +325,112 @@ public class DockerSessionService : IDisposable
 
         _logger.LogInformation("Session {SessionId}: Source code and {AssetCount} asset(s) copied to container",
             session.Id, session.Assets.Count);
+    }
+
+    private async Task CopyProjectToContainerAsync(
+        Session session,
+        List<ProjectFile> files,
+        List<ProjectAsset> assets,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(session.WorkspacePath))
+        {
+            if (Directory.Exists(session.WorkspacePath))
+            {
+                try { Directory.Delete(session.WorkspacePath, true); } catch { }
+            }
+            Directory.CreateDirectory(session.WorkspacePath);
+
+            foreach (var file in files)
+            {
+                var normalized = file.Path.Replace('\\', '/').TrimStart('/');
+                var fullFilePath = Path.Combine(session.WorkspacePath, normalized.Replace('/', Path.DirectorySeparatorChar));
+                var parentDir = Path.GetDirectoryName(fullFilePath);
+                if (!string.IsNullOrEmpty(parentDir))
+                    Directory.CreateDirectory(parentDir);
+                await File.WriteAllTextAsync(fullFilePath, file.Content, Encoding.UTF8, ct);
+            }
+
+            var assetsDir = Path.Combine(session.WorkspacePath, "assets");
+            Directory.CreateDirectory(assetsDir);
+
+            foreach (var asset in assets)
+            {
+                if (File.Exists(asset.StoragePath))
+                {
+                    var targetInAssets = Path.Combine(assetsDir, asset.FileName);
+                    File.Copy(asset.StoragePath, targetInAssets, true);
+
+                    var targetInRoot = Path.Combine(session.WorkspacePath, asset.FileName);
+                    if (!File.Exists(targetInRoot))
+                    {
+                        File.Copy(asset.StoragePath, targetInRoot, true);
+                    }
+
+                    var fileInfo = new FileInfo(asset.StoragePath);
+                    lock (session.Assets)
+                    {
+                        session.Assets.RemoveAll(a => string.Equals(a.Name, asset.FileName, StringComparison.OrdinalIgnoreCase));
+                        session.Assets.Add(new SessionAsset(asset.FileName, fileInfo.Length, DateTime.UtcNow));
+                    }
+                }
+            }
+        }
+
+        var tarBytes = CreateProjectTarArchive(files, assets);
+        using var stream = new MemoryStream(tarBytes);
+        await _docker.Containers.ExtractArchiveToContainerAsync(
+            session.ContainerId,
+            new ContainerPathStatParameters { Path = "/workspace" },
+            stream,
+            ct);
+
+        _logger.LogInformation("Session {SessionId}: Project copied to container ({FileCount} files, {AssetCount} assets)",
+            session.Id, files.Count, assets.Count);
+    }
+
+    private static byte[] CreateProjectTarArchive(
+        List<ProjectFile> files,
+        List<ProjectAsset> assets)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new TarWriter(ms, TarEntryFormat.Ustar, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var entryPath = file.Path.Replace('\\', '/').TrimStart('/');
+                var contentBytes = Encoding.UTF8.GetBytes(file.Content);
+                var entry = new UstarTarEntry(TarEntryType.RegularFile, entryPath)
+                {
+                    DataStream = new MemoryStream(contentBytes),
+                    Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+                };
+                writer.WriteEntry(entry);
+            }
+
+            foreach (var asset in assets)
+            {
+                if (File.Exists(asset.StoragePath))
+                {
+                    var assetBytes = File.ReadAllBytes(asset.StoragePath);
+
+                    var assetEntry1 = new UstarTarEntry(TarEntryType.RegularFile, $"assets/{asset.FileName}")
+                    {
+                        DataStream = new MemoryStream(assetBytes),
+                        Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+                    };
+                    writer.WriteEntry(assetEntry1);
+
+                    var assetEntry2 = new UstarTarEntry(TarEntryType.RegularFile, asset.FileName)
+                    {
+                        DataStream = new MemoryStream(assetBytes),
+                        Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+                    };
+                    writer.WriteEntry(assetEntry2);
+                }
+            }
+        }
+        return ms.ToArray();
     }
 
     private async Task MonitorContainerOutputAsync(Session session, CancellationToken ct)
