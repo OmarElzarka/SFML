@@ -1,5 +1,14 @@
 <!-- SFML 2.6.2 Online IDE -->
-<div class="ide-container">
+<div
+  class="ide-container"
+  [class.resizing]="isResizing"
+  [class.maximized-editor]="maximizedPanel === 'editor'"
+  [class.maximized-display]="maximizedPanel === 'display'"
+  [class.maximized-terminal]="maximizedPanel === 'terminal'"
+>
+  <!-- ─── Transparent Drag Overlay during Resize ──────────────────────── -->
+  <div class="resize-overlay" *ngIf="isResizing"></div>
+
   <!-- ─── Top Navbar ─────────────────────────────────────────────────── -->
   <header class="ide-header">
     <div class="header-left">
@@ -34,6 +43,45 @@
         <span class="save-spinner" *ngIf="saveStatus === 'saving'"></span>
         <span class="save-check" *ngIf="saveStatus === 'saved'">✓</span>
         <span class="save-label">{{ saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Unsaved' }}</span>
+      </div>
+
+      <!-- View Panel Toggles (Visual Studio Style) -->
+      <div class="view-toggles">
+        <button
+          class="view-toggle-btn"
+          [class.active]="sidebarVisible"
+          (click)="toggleSidebar()"
+          title="Toggle Explorer & Assets panel"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+            <path d="M1.75 2.5h12.5a.25.25 0 01.25.25v10.5a.25.25 0 01-.25.25H1.75a.25.25 0 01-.25-.25V2.75a.25.25 0 01.25-.25zM14.25 1H1.75A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25V2.75A1.75 1.75 0 0014.25 1zM5 4v8h9V4H5z"/>
+          </svg>
+          <span>Explorer</span>
+        </button>
+
+        <button
+          class="view-toggle-btn"
+          [class.active]="displayVisible"
+          (click)="toggleDisplay()"
+          title="Toggle SFML Display viewport"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+            <path d="M14.25 1H1.75A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25V2.75A1.75 1.75 0 0014.25 1zM2 4v8h8V4H2z"/>
+          </svg>
+          <span>Display</span>
+        </button>
+
+        <button
+          class="view-toggle-btn"
+          [class.active]="terminalVisible"
+          (click)="toggleTerminal()"
+          title="Toggle Terminal & Build Output panel"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+            <path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.5 0v6.5h13V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/>
+          </svg>
+          <span>Terminal</span>
+        </button>
       </div>
     </div>
 
@@ -82,16 +130,26 @@
   </header>
 
   <!-- ─── Main IDE Body ──────────────────────────────────────────────── -->
-  <main class="ide-main">
+  <main class="ide-main" [class.maximized-editor]="maximizedPanel === 'editor'" [class.maximized-display]="maximizedPanel === 'display'">
     <!-- ─── Left Sidebar: Project Explorer ───────────────────────────── -->
-    <aside class="sidebar-explorer" id="sidebar-explorer">
+    <aside
+      class="sidebar-explorer"
+      id="sidebar-explorer"
+      *ngIf="sidebarVisible && !maximizedPanel"
+      [style.width.px]="sidebarWidth"
+    >
       <div class="explorer-header">
         <span class="explorer-title">PROJECT EXPLORER</span>
-        <button class="icon-btn" (click)="openNewFileModal()" title="New File (+)">
-          <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-            <path d="M3.75 2h6.586a.75.75 0 01.53.22l3.414 3.414a.75.75 0 01.22.53v7.086A1.75 1.75 0 0112.75 15H3.75A1.75 1.75 0 012 13.25V3.75C2 2.784 2.784 2 3.75 2zm5.75 1.56V6.5a.5.5 0 00.5.5h2.94L9.5 3.56zM8 8a.75.75 0 01.75.75v1.5h1.5a.75.75 0 010 1.5h-1.5v1.5a.75.75 0 01-1.5 0v-1.5h-1.5a.75.75 0 010-1.5h1.5v-1.5A.75.75 0 018 8z"/>
-          </svg>
-        </button>
+        <div class="header-actions">
+          <button class="icon-btn" (click)="openNewFileModal()" title="New File (+)">
+            <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+              <path d="M3.75 2h6.586a.75.75 0 01.53.22l3.414 3.414a.75.75 0 01.22.53v7.086A1.75 1.75 0 0112.75 15H3.75A1.75 1.75 0 012 13.25V3.75C2 2.784 2.784 2 3.75 2zm5.75 1.56V6.5a.5.5 0 00.5.5h2.94L9.5 3.56zM8 8a.75.75 0 01.75.75v1.5h1.5a.75.75 0 010 1.5h-1.5v1.5a.75.75 0 01-1.5 0v-1.5h-1.5a.75.75 0 010-1.5h1.5v-1.5A.75.75 0 018 8z"/>
+            </svg>
+          </button>
+          <button class="icon-btn" (click)="toggleSidebar()" title="Collapse Explorer">
+            ✕
+          </button>
+        </div>
       </div>
 
       <div class="explorer-scroll-area">
@@ -135,7 +193,7 @@
           </button>
         </div>
 
-        <!-- Assets Section -->
+        <!-- Assets Section (Collapsible Accordion) -->
         <div
           class="explorer-section assets-dropzone"
           (dragover)="onDragOver($event)"
@@ -143,74 +201,89 @@
           (drop)="onDrop($event)"
           [class.drag-over]="isDraggingOver"
         >
-          <div class="section-label">
-            <span>ASSETS</span>
+          <div class="section-label section-clickable" (click)="toggleAssets()" title="Click to collapse/expand assets">
+            <div class="label-left">
+              <span class="accordion-arrow">{{ assetsVisible ? '▼' : '▶' }}</span>
+              <span>ASSETS</span>
+            </div>
             <span class="item-count">{{ currentProject?.assets?.length || 0 }}</span>
           </div>
 
-          <div class="asset-list" *ngIf="(currentProject?.assets?.length || 0) > 0">
-            <div
-              *ngFor="let asset of currentProject?.assets"
-              class="tree-item asset-item"
-              [title]="asset.relativePath"
-            >
-              <div class="tree-item-left">
-                <span class="asset-type-icon">
-                  <svg *ngIf="isImage(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                    <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
-                  </svg>
-                  <svg *ngIf="isAudio(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                    <path d="M8 2a1 1 0 00-1 1v7.17A2.5 2.5 0 109 12.5V5h3a1 1 0 001-1V3a1 1 0 00-1-1H8z"/>
-                  </svg>
-                  <svg *ngIf="isFont(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
-                    <path d="M4.5 3h7a.5.5 0 010 1h-3v8.5a.5.5 0 01-1 0V4h-3a.5.5 0 010-1z"/>
-                  </svg>
-                </span>
-                <div class="asset-details">
-                  <span class="item-name">{{ asset.fileName }}</span>
-                  <span class="item-meta">{{ formatBytes(asset.size) }}</span>
-                </div>
-              </div>
-
-              <button
-                class="tree-action-btn delete-btn"
-                (click)="deleteAsset(asset, $event)"
-                title="Delete asset"
-                [disabled]="isUploading"
+          <div *ngIf="assetsVisible">
+            <div class="asset-list" *ngIf="(currentProject?.assets?.length || 0) > 0">
+              <div
+                *ngFor="let asset of currentProject?.assets"
+                class="tree-item asset-item"
+                [title]="asset.relativePath"
               >
-                ✕
-              </button>
+                <div class="tree-item-left">
+                  <span class="asset-type-icon">
+                    <svg *ngIf="isImage(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                      <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
+                    </svg>
+                    <svg *ngIf="isAudio(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                      <path d="M8 2a1 1 0 00-1 1v7.17A2.5 2.5 0 109 12.5V5h3a1 1 0 001-1V3a1 1 0 00-1-1H8z"/>
+                    </svg>
+                    <svg *ngIf="isFont(asset.fileName)" viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+                      <path d="M4.5 3h7a.5.5 0 010 1h-3v8.5a.5.5 0 01-1 0V4h-3a.5.5 0 010-1z"/>
+                    </svg>
+                  </span>
+                  <div class="asset-details">
+                    <span class="item-name">{{ asset.fileName }}</span>
+                    <span class="item-meta">{{ formatBytes(asset.size) }}</span>
+                  </div>
+                </div>
+
+                <button
+                  class="tree-action-btn delete-btn"
+                  (click)="deleteAsset(asset, $event)"
+                  title="Delete asset"
+                  [disabled]="isUploading"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div class="assets-empty-hint" *ngIf="(currentProject?.assets?.length || 0) === 0">
-            <span>Drop images/sounds here</span>
-          </div>
+            <div class="assets-empty-hint" *ngIf="(currentProject?.assets?.length || 0) === 0">
+              <span>Drop images/sounds here</span>
+            </div>
 
-          <input
-            #assetInput
-            type="file"
-            multiple
-            accept=".png,.jpg,.jpeg,.bmp,.tga,.psd,.ttf,.otf,.wav,.ogg,.flac"
-            style="display: none"
-            (change)="onFileSelected($event)"
-          />
+            <input
+              #assetInput
+              type="file"
+              multiple
+              accept=".png,.jpg,.jpeg,.bmp,.tga,.psd,.ttf,.otf,.wav,.ogg,.flac"
+              style="display: none"
+              (change)="onFileSelected($event)"
+            />
 
-          <button class="add-file-btn" (click)="assetInput.click()" [disabled]="isUploading">
-            <span *ngIf="!isUploading">+ Upload Asset</span>
-            <span *ngIf="isUploading">Uploading...</span>
-          </button>
+            <button class="add-file-btn" (click)="assetInput.click()" [disabled]="isUploading">
+              <span *ngIf="!isUploading">+ Upload Asset</span>
+              <span *ngIf="isUploading">Uploading...</span>
+            </button>
 
-          <div class="asset-upload-error" *ngIf="uploadError">
-            <span>{{ uploadError }}</span>
-            <button (click)="uploadError = null">✕</button>
+            <div class="asset-upload-error" *ngIf="uploadError">
+              <span>{{ uploadError }}</span>
+              <button (click)="uploadError = null">✕</button>
+            </div>
           </div>
         </div>
       </div>
     </aside>
 
+    <!-- ─── Splitter 1: Between Sidebar and Editor ───────────────────── -->
+    <div
+      class="splitter splitter-vertical"
+      *ngIf="sidebarVisible && !maximizedPanel"
+      (mousedown)="startResize('sidebar', $event)"
+      title="Drag to resize Explorer"
+    >
+      <div class="splitter-handle"></div>
+    </div>
+
     <!-- ─── Center: Multi-File Monaco Editor ─────────────────────────── -->
-    <section class="editor-area">
+    <section class="editor-area" *ngIf="maximizedPanel !== 'display'">
       <!-- Tabs Bar -->
       <div class="tabs-bar">
         <div class="tabs-scroll">
@@ -235,27 +308,92 @@
           </div>
         </div>
 
-        <div class="tabs-shortcut-hint">Ctrl+Enter to Run</div>
+        <div class="tabs-right-tools">
+          <span class="tabs-shortcut-hint">Ctrl+Enter to Run</span>
+          <!-- Maximize / Restore Editor Button -->
+          <button
+            class="panel-tool-btn"
+            (click)="toggleMaximize('editor')"
+            [title]="maximizedPanel === 'editor' ? 'Restore Editor' : 'Maximize Editor'"
+          >
+            <span *ngIf="maximizedPanel !== 'editor'">⛶</span>
+            <span *ngIf="maximizedPanel === 'editor'">❐</span>
+          </button>
+        </div>
       </div>
 
       <!-- Monaco Container -->
       <div class="editor-viewport" #editorContainer id="editor-container"></div>
     </section>
 
+    <!-- ─── Splitter 2: Between Editor and SFML Display ──────────────── -->
+    <div
+      class="splitter splitter-vertical"
+      *ngIf="displayVisible && !maximizedPanel"
+      (mousedown)="startResize('display', $event)"
+      title="Drag to resize Display"
+    >
+      <div class="splitter-handle"></div>
+    </div>
+
     <!-- ─── Right: Genuine SFML 2.6.2 Output Viewport ────────────────── -->
-    <section class="viewport-area">
+    <section
+      class="viewport-area"
+      *ngIf="displayVisible && maximizedPanel !== 'editor'"
+      [style.width.px]="maximizedPanel === 'display' ? null : displayWidth"
+    >
       <div class="viewport-header">
         <div class="viewport-tab active">
-          <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+          <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
             <path d="M0 3.5A1.5 1.5 0 011.5 2h13A1.5 1.5 0 0116 3.5v9a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 010 12.5v-9zM1.5 3a.5.5 0 00-.5.5v9a.5.5 0 00.5.5h13a.5.5 0 00.5-.5v-9a.5.5 0 00-.5-.5h-13z"/>
           </svg>
-          <span>SFML 2.6.2 Display</span>
+          <span>SFML 2.6.2 Window</span>
+        </div>
+
+        <div class="viewport-actions">
+          <!-- Pop-out to separate browser tab -->
+          <button
+            class="panel-tool-btn popout-btn"
+            (click)="popOutGameWindow()"
+            title="Open game in separate browser tab at real size"
+          >
+            <span>↗ Pop Out</span>
+          </button>
+
+          <!-- Maximize Display inside IDE -->
+          <button
+            class="panel-tool-btn"
+            (click)="toggleMaximize('display')"
+            [title]="maximizedPanel === 'display' ? 'Restore Viewport' : 'Maximize Viewport'"
+          >
+            <span *ngIf="maximizedPanel !== 'display'">⛶</span>
+            <span *ngIf="maximizedPanel === 'display'">❐</span>
+          </button>
+
+          <!-- Close / Hide Display -->
+          <button class="panel-tool-btn" (click)="toggleDisplay()" title="Hide Display">
+            ✕
+          </button>
         </div>
       </div>
 
       <div class="viewport-frame-wrapper" (click)="focusIframe()">
+        <!-- Display Popped Out Banner -->
+        <div class="popped-out-banner" *ngIf="poppedOut">
+          <div class="popped-out-card">
+            <div class="popped-icon">↗</div>
+            <h3>Game Running in Separate Tab</h3>
+            <p>Your SFML application is active in a dedicated browser window for a full-screen, authentic experience.</p>
+            <div class="popped-actions">
+              <button class="btn btn-primary btn-sm" (click)="focusPopOut()">Focus Game Tab</button>
+              <button class="btn btn-secondary btn-sm" (click)="dockBack()">Dock back to IDE</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Embedded noVNC display -->
         <iframe
-          *ngIf="safeVncUrl"
+          *ngIf="safeVncUrl && !poppedOut"
           #vncFrame
           id="vnc-frame"
           [src]="safeVncUrl"
@@ -263,24 +401,44 @@
           allow="keyboard-map; fullscreen"
         ></iframe>
 
-        <div class="viewport-idle-screen" *ngIf="!safeVncUrl" id="viewport-placeholder">
+        <!-- Idle screen when not running -->
+        <div class="viewport-idle-screen" *ngIf="!safeVncUrl && !poppedOut" id="viewport-placeholder">
           <div class="idle-card">
             <div class="idle-icon">
-              <svg width="56" height="56" viewBox="0 0 64 64" fill="none">
+              <svg width="52" height="52" viewBox="0 0 64 64" fill="none">
                 <rect x="8" y="8" width="48" height="48" rx="8" stroke="var(--border-primary)" stroke-width="2" stroke-dasharray="4 4"/>
                 <path d="M26 22l18 10-18 10V22z" fill="#58a6ff"/>
               </svg>
             </div>
             <h3>SFML Application Ready</h3>
-            <p>Click <strong>Run</strong> (or press <strong>Ctrl+Enter</strong>) to compile all files and start the SFML 2.6.2 window.</p>
+            <p>Click <strong>Run</strong> to compile all files and start your SFML 2.6.2 window.</p>
+            <button class="popout-link" (click)="popOutGameWindow()">
+              ↗ Run directly in separate tab
+            </button>
           </div>
         </div>
       </div>
     </section>
   </main>
 
+  <!-- ─── Splitter 3: Between Workspace and Terminal ─────────────────── -->
+  <div
+    class="splitter splitter-horizontal"
+    *ngIf="terminalVisible && !maximizedPanel && !terminalCollapsed"
+    (mousedown)="startResize('terminal', $event)"
+    title="Drag to resize Terminal"
+  >
+    <div class="splitter-handle-h"></div>
+  </div>
+
   <!-- ─── Bottom Terminal / Compiler Output ────────────────────────── -->
-  <footer class="ide-terminal">
+  <footer
+    class="ide-terminal"
+    *ngIf="terminalVisible && maximizedPanel !== 'editor' && maximizedPanel !== 'display'"
+    [style.height.px]="terminalCollapsed ? 30 : (maximizedPanel === 'terminal' ? null : terminalHeight)"
+    [class.collapsed]="terminalCollapsed"
+    [class.maximized]="maximizedPanel === 'terminal'"
+  >
     <div class="terminal-header">
       <div class="terminal-tab active">
         <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
@@ -289,8 +447,35 @@
         </svg>
         <span>Terminal & Build Output</span>
       </div>
+
+      <div class="terminal-actions">
+        <!-- Collapse / Expand Button -->
+        <button
+          class="panel-tool-btn"
+          (click)="toggleTerminalCollapse()"
+          [title]="terminalCollapsed ? 'Expand Terminal' : 'Collapse Terminal'"
+        >
+          {{ terminalCollapsed ? '▲' : '▼' }}
+        </button>
+
+        <!-- Maximize Button -->
+        <button
+          class="panel-tool-btn"
+          (click)="toggleMaximize('terminal')"
+          [title]="maximizedPanel === 'terminal' ? 'Restore Terminal' : 'Maximize Terminal'"
+        >
+          <span *ngIf="maximizedPanel !== 'terminal'">⛶</span>
+          <span *ngIf="maximizedPanel === 'terminal'">❐</span>
+        </button>
+
+        <!-- Hide Button -->
+        <button class="panel-tool-btn" (click)="toggleTerminal()" title="Hide Terminal">
+          ✕
+        </button>
+      </div>
     </div>
-    <div class="terminal-body" id="terminal-content">
+
+    <div class="terminal-body" id="terminal-content" *ngIf="!terminalCollapsed">
       <pre class="terminal-output" *ngIf="terminalOutput" id="terminal-output">{{ terminalOutput }}</pre>
       <div class="terminal-idle" *ngIf="!terminalOutput">
         <span class="terminal-prompt">$</span>

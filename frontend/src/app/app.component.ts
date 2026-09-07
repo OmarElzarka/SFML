@@ -1,4 +1,4 @@
-import { Component, ViewChild, ElementRef, OnInit, OnDestroy } from '@angular/core';
+import { Component, ViewChild, ElementRef, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
@@ -32,6 +32,29 @@ export class AppComponent implements OnInit, OnDestroy {
   private fileModels = new Map<number, any>();
   private subs: Subscription[] = [];
   private saveTimeout: any = null;
+
+  // ─── Resizable & Customizable Panel Dimensions & Visibility ────────────────
+  sidebarWidth = 240;
+  displayWidth = 480;
+  terminalHeight = 160;
+
+  sidebarVisible = true;
+  assetsVisible = true;
+  displayVisible = true;
+  terminalVisible = true;
+  terminalCollapsed = false;
+
+  maximizedPanel: 'editor' | 'display' | 'terminal' | null = null;
+  isResizing = false;
+  activeResizePanel: 'sidebar' | 'display' | 'terminal' | null = null;
+  private resizeStartX = 0;
+  private resizeStartY = 0;
+  private resizeStartWidth = 0;
+  private resizeStartHeight = 0;
+
+  // ─── Pop-out Separate Game Window ──────────────────────────────────────────
+  poppedOut = false;
+  private popOutWindow: Window | null = null;
 
   // State from ProjectService
   currentUser: UserDto | null = null;
@@ -97,6 +120,8 @@ export class AppComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
+    this.loadLayoutState();
+
     this.subs.push(
       this.projectService.currentUser$.subscribe((u) => {
         this.currentUser = u;
@@ -161,6 +186,187 @@ export class AppComponent implements OnInit, OnDestroy {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.editor?.dispose();
     this.fileModels.clear();
+  }
+
+  @HostListener('window:resize')
+  onWindowResize(): void {
+    this.editor?.layout();
+  }
+
+  // ─── Resizing Splitters ───────────────────────────────────────────────────
+
+  startResize(panel: 'sidebar' | 'display' | 'terminal', event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+
+    this.isResizing = true;
+    this.activeResizePanel = panel;
+    this.resizeStartX = event.clientX;
+    this.resizeStartY = event.clientY;
+
+    if (panel === 'sidebar') {
+      this.resizeStartWidth = this.sidebarWidth;
+    } else if (panel === 'display') {
+      this.resizeStartWidth = this.displayWidth;
+    } else if (panel === 'terminal') {
+      this.resizeStartHeight = this.terminalHeight;
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!this.isResizing) return;
+
+      if (this.activeResizePanel === 'sidebar') {
+        const deltaX = e.clientX - this.resizeStartX;
+        this.sidebarWidth = Math.max(160, Math.min(600, this.resizeStartWidth + deltaX));
+      } else if (this.activeResizePanel === 'display') {
+        const deltaX = this.resizeStartX - e.clientX;
+        this.displayWidth = Math.max(260, Math.min(900, this.resizeStartWidth + deltaX));
+      } else if (this.activeResizePanel === 'terminal') {
+        const deltaY = this.resizeStartY - e.clientY;
+        this.terminalHeight = Math.max(40, Math.min(600, this.resizeStartHeight + deltaY));
+      }
+
+      this.editor?.layout();
+    };
+
+    const onMouseUp = () => {
+      this.isResizing = false;
+      this.activeResizePanel = null;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      this.saveLayoutState();
+      this.editor?.layout();
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }
+
+  // ─── Panel Toggles & Maximize ─────────────────────────────────────────────
+
+  toggleSidebar(): void {
+    this.sidebarVisible = !this.sidebarVisible;
+    this.saveLayoutState();
+    setTimeout(() => this.editor?.layout(), 50);
+  }
+
+  toggleAssets(): void {
+    this.assetsVisible = !this.assetsVisible;
+    this.saveLayoutState();
+  }
+
+  toggleDisplay(): void {
+    this.displayVisible = !this.displayVisible;
+    this.saveLayoutState();
+    setTimeout(() => this.editor?.layout(), 50);
+  }
+
+  toggleTerminal(): void {
+    this.terminalVisible = !this.terminalVisible;
+    this.saveLayoutState();
+    setTimeout(() => this.editor?.layout(), 50);
+  }
+
+  toggleTerminalCollapse(): void {
+    this.terminalCollapsed = !this.terminalCollapsed;
+    this.saveLayoutState();
+    setTimeout(() => this.editor?.layout(), 50);
+  }
+
+  toggleMaximize(panel: 'editor' | 'display' | 'terminal'): void {
+    if (this.maximizedPanel === panel) {
+      this.maximizedPanel = null;
+    } else {
+      this.maximizedPanel = panel;
+    }
+    setTimeout(() => this.editor?.layout(), 50);
+  }
+
+  // ─── Pop-Out Game Window in Separate Browser Tab ──────────────────────────
+
+  popOutGameWindow(): void {
+    if (!this.vncUrl) {
+      if (this.currentProject && !this.isRunning) {
+        this.run();
+      }
+    }
+    this.poppedOut = true;
+    const url = this.vncUrl || 'about:blank';
+    const popout = window.open(
+      url,
+      'SFML_Game_Window',
+      'width=1024,height=768,menubar=no,toolbar=no,location=no,status=no,resizable=yes'
+    );
+    this.popOutWindow = popout;
+
+    if (popout) {
+      const checkTimer = setInterval(() => {
+        if (popout.closed) {
+          clearInterval(checkTimer);
+          this.poppedOut = false;
+          this.popOutWindow = null;
+        }
+      }, 1000);
+    }
+  }
+
+  focusPopOut(): void {
+    if (this.popOutWindow && !this.popOutWindow.closed) {
+      this.popOutWindow.focus();
+    } else {
+      this.popOutGameWindow();
+    }
+  }
+
+  dockBack(): void {
+    if (this.popOutWindow && !this.popOutWindow.closed) {
+      this.popOutWindow.close();
+    }
+    this.poppedOut = false;
+    this.popOutWindow = null;
+    this.displayVisible = true;
+    setTimeout(() => this.editor?.layout(), 50);
+  }
+
+  // ─── Layout Persistence ───────────────────────────────────────────────────
+
+  loadLayoutState(): void {
+    try {
+      const saved = localStorage.getItem('sfml_ide_layout');
+      if (saved) {
+        const s = JSON.parse(saved);
+        if (s.sidebarWidth) this.sidebarWidth = s.sidebarWidth;
+        if (s.displayWidth) this.displayWidth = s.displayWidth;
+        if (s.terminalHeight) this.terminalHeight = s.terminalHeight;
+        if (typeof s.sidebarVisible === 'boolean') this.sidebarVisible = s.sidebarVisible;
+        if (typeof s.assetsVisible === 'boolean') this.assetsVisible = s.assetsVisible;
+        if (typeof s.displayVisible === 'boolean') this.displayVisible = s.displayVisible;
+        if (typeof s.terminalVisible === 'boolean') this.terminalVisible = s.terminalVisible;
+        if (typeof s.terminalCollapsed === 'boolean') this.terminalCollapsed = s.terminalCollapsed;
+      }
+    } catch {
+      /* ignore storage errors */
+    }
+  }
+
+  saveLayoutState(): void {
+    try {
+      localStorage.setItem(
+        'sfml_ide_layout',
+        JSON.stringify({
+          sidebarWidth: this.sidebarWidth,
+          displayWidth: this.displayWidth,
+          terminalHeight: this.terminalHeight,
+          sidebarVisible: this.sidebarVisible,
+          assetsVisible: this.assetsVisible,
+          displayVisible: this.displayVisible,
+          terminalVisible: this.terminalVisible,
+          terminalCollapsed: this.terminalCollapsed,
+        })
+      );
+    } catch {
+      /* ignore storage errors */
+    }
   }
 
   // ─── Monaco Editor Setup ──────────────────────────────────────────────────
@@ -442,6 +648,12 @@ export class AppComponent implements OnInit, OnDestroy {
     this.saveCurrentFileNow();
     this.terminalOutput = '';
     this.sessionService.runProject(this.currentProject.id);
+
+    // If display is hidden, make it visible on run so student sees output
+    if (!this.displayVisible && !this.poppedOut) {
+      this.displayVisible = true;
+      setTimeout(() => this.editor?.layout(), 50);
+    }
   }
 
   stop(): void {
@@ -482,6 +694,14 @@ export class AppComponent implements OnInit, OnDestroy {
       case 'Running':
         lines.push('✅ Multi-file C++ build succeeded');
         lines.push('🖥️  SFML 2.6.2 window active via Xvfb + noVNC');
+        if (this.poppedOut && this.popOutWindow && this.vncUrl) {
+          // If popped out, navigate the popup window to the fresh vncUrl
+          try {
+            if (this.popOutWindow.location.href !== this.vncUrl) {
+              this.popOutWindow.location.href = this.vncUrl;
+            }
+          } catch { }
+        }
         break;
       case 'Stopped':
         lines.push('⏹️  Execution session stopped');
