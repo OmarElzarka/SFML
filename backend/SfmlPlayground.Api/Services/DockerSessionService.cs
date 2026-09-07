@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Formats.Tar;
 using System.Text;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -20,6 +21,22 @@ public class DockerSessionService : IDisposable
     private static readonly TimeSpan SessionTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan CompileTimeout = TimeSpan.FromSeconds(30);
 
+    public static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".psd",
+        ".wav", ".ogg", ".flac",
+        ".ttf", ".otf"
+    };
+
+    public const long MaxFileSizeBytes = 10 * 1024 * 1024;    // 10 MB
+    public const long MaxTotalSizeBytes = 20 * 1024 * 1024;   // 20 MB
+    public const int MaxAssetCount = 20;
+
+    private static readonly HashSet<string> ReservedFileNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "main.cpp", "app", "compile.sh", "entrypoint.sh", "rc.xml"
+    };
+
     public DockerSessionService(ILogger<DockerSessionService> logger, IConfiguration config)
     {
         _logger = logger;
@@ -33,23 +50,80 @@ public class DockerSessionService : IDisposable
     }
 
     /// <summary>
-    /// Creates a new execution session: starts Docker container, compiles code, runs SFML app.
+    /// Initializes an empty session and its workspace directory without starting Docker yet.
     /// </summary>
-    public async Task<Session> CreateSessionAsync(string sourceCode, CancellationToken ct = default)
+    public Session InitializeSession()
     {
         if (_sessions.Count >= MaxSessions)
             throw new InvalidOperationException("Maximum number of concurrent sessions reached. Please try again later.");
 
         var sessionId = Guid.NewGuid().ToString("N")[..12];
+        var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
+        Directory.CreateDirectory(workspacePath);
+
         var session = new Session
         {
             Id = sessionId,
-            SourceCode = sourceCode,
-            Status = SessionStatus.Starting
+            Status = SessionStatus.Ready,
+            WorkspacePath = workspacePath
         };
 
         _sessions[sessionId] = session;
-        _logger.LogInformation("Session {SessionId}: Created", sessionId);
+        _logger.LogInformation("Session {SessionId}: Initialized workspace at {WorkspacePath}", sessionId, workspacePath);
+        return session;
+    }
+
+    /// <summary>
+    /// Creates or starts an execution session: starts Docker container, compiles code, runs SFML app.
+    /// Reuses existing session and workspace if existingSessionId is provided.
+    /// </summary>
+    public async Task<Session> CreateSessionAsync(string sourceCode, string? existingSessionId = null, CancellationToken ct = default)
+    {
+        Session session;
+
+        if (!string.IsNullOrWhiteSpace(existingSessionId) && _sessions.TryGetValue(existingSessionId, out var existing))
+        {
+            session = existing;
+            session.SourceCode = sourceCode;
+            session.LastHeartbeat = DateTime.UtcNow;
+
+            if (!string.IsNullOrEmpty(session.ContainerId))
+            {
+                await StopContainerInternalAsync(session.ContainerId);
+                session.ContainerId = string.Empty;
+            }
+        }
+        else
+        {
+            if (_sessions.Count >= MaxSessions)
+                throw new InvalidOperationException("Maximum number of concurrent sessions reached. Please try again later.");
+
+            var sessionId = Guid.NewGuid().ToString("N")[..12];
+            var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
+            Directory.CreateDirectory(workspacePath);
+
+            session = new Session
+            {
+                Id = sessionId,
+                SourceCode = sourceCode,
+                Status = SessionStatus.Starting,
+                WorkspacePath = workspacePath
+            };
+
+            _sessions[sessionId] = session;
+            _logger.LogInformation("Session {SessionId}: Created", sessionId);
+        }
+
+        if (string.IsNullOrEmpty(session.WorkspacePath))
+        {
+            session.WorkspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", session.Id, "workspace");
+            Directory.CreateDirectory(session.WorkspacePath);
+        }
+
+        session.Status = SessionStatus.Starting;
+        session.ErrorMessage = null;
+        session.CompilerOutput = string.Empty;
+        session.RuntimeOutput = string.Empty;
 
         try
         {
@@ -58,7 +132,7 @@ public class DockerSessionService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Session {SessionId}: Failed to start", sessionId);
+            _logger.LogError(ex, "Session {SessionId}: Failed to start", session.Id);
             session.Status = SessionStatus.Error;
             session.ErrorMessage = $"Failed to start execution environment: {ex.Message}";
             return session;
@@ -136,9 +210,15 @@ public class DockerSessionService : IDisposable
 
     private async Task CopySourceToContainerAsync(Session session, CancellationToken ct)
     {
-        // Create a tar archive containing main.cpp
-        var sourceBytes = Encoding.UTF8.GetBytes(session.SourceCode);
-        var tarBytes = CreateTarArchive("main.cpp", sourceBytes);
+        // Write main.cpp to the session workspace
+        if (!string.IsNullOrEmpty(session.WorkspacePath))
+        {
+            var mainCppPath = Path.Combine(session.WorkspacePath, "main.cpp");
+            await File.WriteAllTextAsync(mainCppPath, session.SourceCode, Encoding.UTF8, ct);
+        }
+
+        // Create a tar archive containing main.cpp and all uploaded assets
+        var tarBytes = CreateWorkspaceTarArchive(session.WorkspacePath, session.SourceCode);
 
         using var stream = new MemoryStream(tarBytes);
         await _docker.Containers.ExtractArchiveToContainerAsync(
@@ -147,7 +227,8 @@ public class DockerSessionService : IDisposable
             stream,
             ct);
 
-        _logger.LogInformation("Session {SessionId}: Source code copied to container", session.Id);
+        _logger.LogInformation("Session {SessionId}: Source code and {AssetCount} asset(s) copied to container",
+            session.Id, session.Assets.Count);
     }
 
     private async Task MonitorContainerOutputAsync(Session session, CancellationToken ct)
@@ -346,34 +427,219 @@ public class DockerSessionService : IDisposable
         {
             if (!string.IsNullOrEmpty(session.ContainerId))
             {
-                try
-                {
-                    await _docker.Containers.StopContainerAsync(
-                        session.ContainerId,
-                        new ContainerStopParameters { WaitBeforeKillSeconds = 3 });
-                }
-                catch (DockerContainerNotFoundException)
-                {
-                    // Container already removed (AutoRemove)
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Session {SessionId}: Error stopping container", session.Id);
-                    // Try to kill it
-                    try
-                    {
-                        await _docker.Containers.KillContainerAsync(
-                            session.ContainerId,
-                            new ContainerKillParameters { Signal = "KILL" });
-                    }
-                    catch { /* Best effort */ }
-                }
+                await StopContainerInternalAsync(session.ContainerId);
             }
         }
         finally
         {
+            PurgeWorkspaceDirectory(session);
             session.Status = SessionStatus.Stopped;
             _logger.LogInformation("Session {SessionId}: Stopped and cleaned up", session.Id);
+        }
+    }
+
+    private async Task StopContainerInternalAsync(string containerId)
+    {
+        try
+        {
+            await _docker.Containers.StopContainerAsync(
+                containerId,
+                new ContainerStopParameters { WaitBeforeKillSeconds = 3 });
+        }
+        catch (DockerContainerNotFoundException)
+        {
+            // Container already removed (AutoRemove)
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error stopping container {ContainerId}", containerId);
+            try
+            {
+                await _docker.Containers.KillContainerAsync(
+                    containerId,
+                    new ContainerKillParameters { Signal = "KILL" });
+            }
+            catch { /* Best effort */ }
+        }
+    }
+
+    private void PurgeWorkspaceDirectory(Session session)
+    {
+        if (string.IsNullOrEmpty(session.WorkspacePath))
+            return;
+
+        try
+        {
+            var sessionDir = Directory.GetParent(session.WorkspacePath)?.FullName;
+            if (!string.IsNullOrEmpty(sessionDir) && Directory.Exists(sessionDir))
+            {
+                Directory.Delete(sessionDir, recursive: true);
+                _logger.LogInformation("Session {SessionId}: Purged session workspace at {Dir}", session.Id, sessionDir);
+            }
+            else if (Directory.Exists(session.WorkspacePath))
+            {
+                Directory.Delete(session.WorkspacePath, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Session {SessionId}: Failed to delete workspace directory {Path}", session.Id, session.WorkspacePath);
+        }
+    }
+
+    /// <summary>
+    /// Adds an asset to a session workspace.
+    /// </summary>
+    public async Task<SessionAsset> AddAssetAsync(string sessionId, string fileName, Stream fileStream, long fileSize, CancellationToken ct = default)
+    {
+        var session = GetSession(sessionId)
+            ?? throw new KeyNotFoundException($"Session '{sessionId}' not found.");
+
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new ArgumentException("Asset filename cannot be empty.", nameof(fileName));
+
+        var safeName = Path.GetFileName(fileName).Trim();
+        if (string.IsNullOrWhiteSpace(safeName))
+            throw new ArgumentException("Asset filename cannot be empty.", nameof(fileName));
+
+        if (safeName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new ArgumentException($"Filename contains invalid characters: '{safeName}'.", nameof(fileName));
+
+        if (safeName.Contains("..") || safeName.Contains('/') || safeName.Contains('\\'))
+            throw new ArgumentException("Path traversal is not allowed.", nameof(fileName));
+
+        if (safeName.StartsWith('.'))
+            throw new ArgumentException("Hidden files are not allowed.", nameof(fileName));
+
+        if (ReservedFileNames.Contains(safeName))
+            throw new ArgumentException($"Filename '{safeName}' is reserved.", nameof(fileName));
+
+        var ext = Path.GetExtension(safeName);
+        if (string.IsNullOrEmpty(ext) || !AllowedExtensions.Contains(ext))
+            throw new ArgumentException($"Unsupported file type: '{ext}'. Allowed extensions: {string.Join(", ", AllowedExtensions)}");
+
+        if (fileSize > MaxFileSizeBytes)
+            throw new ArgumentException($"Asset exceeds the 10 MB limit ({fileSize / (1024.0 * 1024.0):F2} MB).");
+
+        lock (session.Assets)
+        {
+            var existingIndex = session.Assets.FindIndex(a => string.Equals(a.Name, safeName, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex < 0 && session.Assets.Count >= MaxAssetCount)
+                throw new InvalidOperationException($"Maximum asset limit reached ({MaxAssetCount} files).");
+
+            var currentTotal = session.Assets
+                .Where(a => !string.Equals(a.Name, safeName, StringComparison.OrdinalIgnoreCase))
+                .Sum(a => a.Size);
+
+            if (currentTotal + fileSize > MaxTotalSizeBytes)
+                throw new InvalidOperationException($"Total asset size would exceed the 20 MB limit ({(currentTotal + fileSize) / (1024.0 * 1024.0):F2} MB).");
+        }
+
+        if (string.IsNullOrEmpty(session.WorkspacePath))
+        {
+            session.WorkspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", session.Id, "workspace");
+        }
+        Directory.CreateDirectory(session.WorkspacePath);
+
+        var targetPath = Path.Combine(session.WorkspacePath, safeName);
+        using (var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            await fileStream.CopyToAsync(fs, ct);
+        }
+
+        var actualSize = new FileInfo(targetPath).Length;
+        var asset = new SessionAsset(safeName, actualSize, DateTime.UtcNow);
+
+        lock (session.Assets)
+        {
+            var idx = session.Assets.FindIndex(a => string.Equals(a.Name, safeName, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+                session.Assets[idx] = asset;
+            else
+                session.Assets.Add(asset);
+        }
+
+        _logger.LogInformation("Session {SessionId}: Saved asset {Asset} ({Size} bytes)", session.Id, safeName, actualSize);
+
+        // If container is currently running, live-inject asset into /workspace
+        if (session.Status == SessionStatus.Running && !string.IsNullOrEmpty(session.ContainerId))
+        {
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(targetPath, ct);
+                var tarBytes = CreateSingleFileTar(safeName, bytes);
+                using var tarStream = new MemoryStream(tarBytes);
+                await _docker.Containers.ExtractArchiveToContainerAsync(
+                    session.ContainerId,
+                    new ContainerPathStatParameters { Path = "/workspace" },
+                    tarStream,
+                    ct);
+                _logger.LogInformation("Session {SessionId}: Live-injected {Asset} into running container", session.Id, safeName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Session {SessionId}: Live injection failed for {Asset}", session.Id, safeName);
+            }
+        }
+
+        return asset;
+    }
+
+    /// <summary>
+    /// Deletes an asset from a session workspace.
+    /// </summary>
+    public bool DeleteAsset(string sessionId, string assetName)
+    {
+        var session = GetSession(sessionId);
+        if (session == null) return false;
+
+        var safeName = Path.GetFileName(assetName);
+        bool removed;
+        lock (session.Assets)
+        {
+            var idx = session.Assets.FindIndex(a => string.Equals(a.Name, safeName, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                session.Assets.RemoveAt(idx);
+                removed = true;
+            }
+            else
+            {
+                removed = false;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(session.WorkspacePath))
+        {
+            var targetPath = Path.Combine(session.WorkspacePath, safeName);
+            if (File.Exists(targetPath))
+            {
+                try
+                {
+                    File.Delete(targetPath);
+                    _logger.LogInformation("Session {SessionId}: Deleted asset {Asset} from workspace", session.Id, safeName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Session {SessionId}: Failed to delete asset file {File}", session.Id, targetPath);
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    /// <summary>
+    /// Gets all assets for a session.
+    /// </summary>
+    public IReadOnlyList<SessionAsset> GetAssets(string sessionId)
+    {
+        var session = GetSession(sessionId)
+            ?? throw new KeyNotFoundException($"Session '{sessionId}' not found.");
+
+        lock (session.Assets)
+        {
+            return session.Assets.ToList().AsReadOnly();
         }
     }
 
@@ -417,65 +683,54 @@ public class DockerSessionService : IDisposable
         return port;
     }
 
-    private static byte[] CreateTarArchive(string fileName, byte[] content)
+    private static byte[] CreateWorkspaceTarArchive(string workspacePath, string sourceCode)
     {
         using var ms = new MemoryStream();
-        // TAR header (512 bytes)
-        var header = new byte[512];
+        using (var writer = new TarWriter(ms, TarEntryFormat.Ustar, leaveOpen: true))
+        {
+            // Add main.cpp
+            var sourceBytes = Encoding.UTF8.GetBytes(sourceCode);
+            var mainEntry = new UstarTarEntry(TarEntryType.RegularFile, "main.cpp")
+            {
+                DataStream = new MemoryStream(sourceBytes),
+                Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+            };
+            writer.WriteEntry(mainEntry);
 
-        // File name (0-99)
-        var nameBytes = Encoding.ASCII.GetBytes(fileName);
-        Array.Copy(nameBytes, header, Math.Min(nameBytes.Length, 100));
+            // Add all assets in workspacePath if exists
+            if (!string.IsNullOrEmpty(workspacePath) && Directory.Exists(workspacePath))
+            {
+                foreach (var file in Directory.GetFiles(workspacePath))
+                {
+                    var fileName = Path.GetFileName(file);
+                    if (string.Equals(fileName, "main.cpp", StringComparison.OrdinalIgnoreCase))
+                        continue; // Already added as primary source
 
-        // File mode (100-107): 0644
-        Encoding.ASCII.GetBytes("0000644\0").CopyTo(header, 100);
+                    var bytes = File.ReadAllBytes(file);
+                    var entry = new UstarTarEntry(TarEntryType.RegularFile, fileName)
+                    {
+                        DataStream = new MemoryStream(bytes),
+                        Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+                    };
+                    writer.WriteEntry(entry);
+                }
+            }
+        }
+        return ms.ToArray();
+    }
 
-        // Owner ID (108-115): 1000
-        Encoding.ASCII.GetBytes("0001000\0").CopyTo(header, 108);
-
-        // Group ID (116-123): 1000
-        Encoding.ASCII.GetBytes("0001000\0").CopyTo(header, 116);
-
-        // File size in octal (124-135)
-        var sizeStr = Convert.ToString(content.Length, 8).PadLeft(11, '0') + "\0";
-        Encoding.ASCII.GetBytes(sizeStr).CopyTo(header, 124);
-
-        // Modification time (136-147)
-        var mtime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var mtimeStr = Convert.ToString(mtime, 8).PadLeft(11, '0') + "\0";
-        Encoding.ASCII.GetBytes(mtimeStr).CopyTo(header, 136);
-
-        // Checksum placeholder (148-155): spaces
-        for (var i = 148; i < 156; i++)
-            header[i] = (byte)' ';
-
-        // Type flag (156): '0' = regular file
-        header[156] = (byte)'0';
-
-        // USTAR indicator (257-262)
-        Encoding.ASCII.GetBytes("ustar\0").CopyTo(header, 257);
-
-        // USTAR version (263-264)
-        Encoding.ASCII.GetBytes("00").CopyTo(header, 263);
-
-        // Calculate checksum
-        var checksum = 0;
-        for (var i = 0; i < 512; i++)
-            checksum += header[i];
-        var checksumStr = Convert.ToString(checksum, 8).PadLeft(6, '0') + "\0 ";
-        Encoding.ASCII.GetBytes(checksumStr).CopyTo(header, 148);
-
-        ms.Write(header, 0, 512);
-        ms.Write(content, 0, content.Length);
-
-        // Pad to 512 byte boundary
-        var padding = 512 - (content.Length % 512);
-        if (padding < 512)
-            ms.Write(new byte[padding], 0, padding);
-
-        // End of archive marker (two empty blocks)
-        ms.Write(new byte[1024], 0, 1024);
-
+    private static byte[] CreateSingleFileTar(string fileName, byte[] content)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new TarWriter(ms, TarEntryFormat.Ustar, leaveOpen: true))
+        {
+            var entry = new UstarTarEntry(TarEntryType.RegularFile, fileName)
+            {
+                DataStream = new MemoryStream(content),
+                Mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead
+            };
+            writer.WriteEntry(entry);
+        }
         return ms.ToArray();
     }
 

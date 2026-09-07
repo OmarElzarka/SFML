@@ -49,14 +49,30 @@ x11vnc -display ${DISPLAY_NUM} -nopw -listen 127.0.0.1 -rfbport ${VNC_PORT} \
     -shared -forever -noxdamage -cursor arrow \
     >/dev/null 2>&1 &
 X11VNC_PID=$!
-sleep 0.5
+
+# Wait for x11vnc to be ready
+for i in $(seq 1 30); do
+    if (echo > /dev/tcp/127.0.0.1/${VNC_PORT}) >/dev/null 2>&1; then
+        echo "[entrypoint] x11vnc is ready on port ${VNC_PORT}."
+        break
+    fi
+    sleep 0.1
+done
 
 # ─── Start WebSocket Proxy ──────────────────────────────────────────────────
 echo "[entrypoint] Starting websockify on port ${WEBSOCKIFY_PORT}..."
 websockify --web /usr/share/novnc ${WEBSOCKIFY_PORT} 127.0.0.1:${VNC_PORT} \
     >/dev/null 2>&1 &
 WEBSOCKIFY_PID=$!
-sleep 0.5
+
+# Wait for websockify to be ready
+for i in $(seq 1 30); do
+    if (echo > /dev/tcp/127.0.0.1/${WEBSOCKIFY_PORT}) >/dev/null 2>&1; then
+        echo "[entrypoint] websockify is ready on port ${WEBSOCKIFY_PORT}."
+        break
+    fi
+    sleep 0.1
+done
 
 echo "DISPLAY_READY"
 echo "WEBSOCKIFY_PORT=${WEBSOCKIFY_PORT}"

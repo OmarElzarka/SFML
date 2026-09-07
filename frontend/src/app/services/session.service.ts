@@ -1,10 +1,17 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, BehaviorSubject, interval, Subscription, timer } from 'rxjs';
-import { switchMap, takeWhile, tap, catchError } from 'rxjs/operators';
+import { Observable, BehaviorSubject, interval, Subscription, timer, of } from 'rxjs';
+import { switchMap, takeWhile, tap, catchError, map } from 'rxjs/operators';
 
 export interface CreateSessionRequest {
+  sessionId?: string;
   sourceCode: string;
+}
+
+export interface AssetInfo {
+  name: string;
+  size: number;
+  uploadedAt?: string;
 }
 
 export interface SessionResponse {
@@ -14,6 +21,7 @@ export interface SessionResponse {
   compilerOutput?: string;
   errorMessage?: string;
   createdAt: string;
+  assets?: AssetInfo[];
 }
 
 export interface DisplayInfo {
@@ -23,6 +31,7 @@ export interface DisplayInfo {
 }
 
 export type SessionStatus =
+  | 'Ready'
   | 'Starting'
   | 'Compiling'
   | 'CompileError'
@@ -42,23 +51,100 @@ export class SessionService {
   private _session = new BehaviorSubject<SessionResponse | null>(null);
   private _displayInfo = new BehaviorSubject<DisplayInfo | null>(null);
   private _isLoading = new BehaviorSubject<boolean>(false);
+  private _assets = new BehaviorSubject<AssetInfo[]>([]);
 
   session$ = this._session.asObservable();
   displayInfo$ = this._displayInfo.asObservable();
   isLoading$ = this._isLoading.asObservable();
+  assets$ = this._assets.asObservable();
 
   constructor(private http: HttpClient) {}
+
+  initSession(): Observable<SessionResponse> {
+    return this.http.post<SessionResponse>(`${this.apiUrl}/sessions/init`, {}).pipe(
+      tap((res) => {
+        this._session.next(res);
+        if (res.assets) {
+          this._assets.next(res.assets);
+        }
+      })
+    );
+  }
+
+  getOrCreateSessionId(): Observable<string> {
+    const current = this._session.value;
+    if (current && current.sessionId) {
+      return of(current.sessionId);
+    }
+    return this.initSession().pipe(map((res) => res.sessionId));
+  }
+
+  uploadAsset(file: File): Observable<AssetInfo> {
+    return this.getOrCreateSessionId().pipe(
+      switchMap((sessionId) => {
+        const formData = new FormData();
+        formData.append('file', file, file.name);
+
+        return this.http.post<AssetInfo>(
+          `${this.apiUrl}/sessions/${sessionId}/assets`,
+          formData
+        ).pipe(
+          tap((uploaded) => {
+            const currentAssets = this._assets.value;
+            const idx = currentAssets.findIndex(
+              (a) => a.name.toLowerCase() === uploaded.name.toLowerCase()
+            );
+            if (idx >= 0) {
+              const updated = [...currentAssets];
+              updated[idx] = uploaded;
+              this._assets.next(updated);
+            } else {
+              this._assets.next([...currentAssets, uploaded]);
+            }
+          })
+        );
+      })
+    );
+  }
+
+  deleteAsset(assetName: string): Observable<void> {
+    const session = this._session.value;
+    if (!session?.sessionId) {
+      return of(undefined);
+    }
+
+    return this.http
+      .delete<void>(`${this.apiUrl}/sessions/${session.sessionId}/assets/${encodeURIComponent(assetName)}`)
+      .pipe(
+        tap(() => {
+          this._assets.next(
+            this._assets.value.filter(
+              (a) => a.name.toLowerCase() !== assetName.toLowerCase()
+            )
+          );
+        })
+      );
+  }
 
   createSession(sourceCode: string): void {
     this._isLoading.next(true);
     this._displayInfo.next(null);
 
+    const currentSessionId = this._session.value?.sessionId;
+    const body: CreateSessionRequest = {
+      sessionId: currentSessionId || undefined,
+      sourceCode,
+    };
+
     this.http
-      .post<SessionResponse>(`${this.apiUrl}/sessions`, { sourceCode })
+      .post<SessionResponse>(`${this.apiUrl}/sessions`, body)
       .subscribe({
         next: (response) => {
           this._session.next(response);
           this._isLoading.next(false);
+          if (response.assets) {
+            this._assets.next(response.assets);
+          }
 
           if (response.status === 'Running') {
             this.fetchDisplayInfo(response.sessionId);
@@ -73,7 +159,7 @@ export class SessionService {
         error: (err) => {
           this._isLoading.next(false);
           this._session.next({
-            sessionId: '',
+            sessionId: currentSessionId || '',
             status: 'Error',
             errorMessage:
               err.error?.error || 'Failed to connect to the server.',
@@ -93,6 +179,9 @@ export class SessionService {
         ),
         tap((response) => {
           this._session.next(response);
+          if (response.assets) {
+            this._assets.next(response.assets);
+          }
           if (response.status === 'Running') {
             this._isLoading.next(false);
             this.fetchDisplayInfo(sessionId);
@@ -128,7 +217,6 @@ export class SessionService {
         },
         error: (err) => {
           console.error('Failed to get display info:', err);
-          // Retry after a short delay
           timer(1000).subscribe(() => this.fetchDisplayInfo(sessionId));
         },
       });
@@ -141,7 +229,6 @@ export class SessionService {
         .post(`${this.apiUrl}/sessions/${sessionId}/heartbeat`, {})
         .subscribe({
           error: () => {
-            // Session may have expired
             this.stopHeartbeat();
           },
         });
@@ -172,7 +259,10 @@ export class SessionService {
           this._isLoading.next(false);
         },
         error: () => {
-          this._session.next(null);
+          this._session.next({
+            ...session,
+            status: 'Stopped',
+          });
           this._displayInfo.next(null);
           this._isLoading.next(false);
         },
@@ -192,5 +282,7 @@ export class SessionService {
     this._session.next(null);
     this._displayInfo.next(null);
     this._isLoading.next(false);
+    this._assets.next([]);
   }
 }
+

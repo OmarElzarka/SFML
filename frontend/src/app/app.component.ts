@@ -1,7 +1,7 @@
 import { Component, ViewChild, ElementRef, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { SessionService, SessionResponse, DisplayInfo } from './services/session.service';
+import { SessionService, SessionResponse, DisplayInfo, AssetInfo } from './services/session.service';
 import { Subscription } from 'rxjs';
 
 declare const monaco: any;
@@ -90,7 +90,11 @@ export class AppComponent implements OnInit, OnDestroy {
 
   session: SessionResponse | null = null;
   displayInfo: DisplayInfo | null = null;
+  assets: AssetInfo[] = [];
   isLoading = false;
+  isUploading = false;
+  uploadError: string | null = null;
+  isDraggingOver = false;
   terminalOutput = '';
   vncUrl: string | null = null;
   safeVncUrl: SafeResourceUrl | null = null;
@@ -107,6 +111,9 @@ export class AppComponent implements OnInit, OnDestroy {
       this.sessionService.session$.subscribe((s) => {
         this.session = s;
         this.updateTerminalOutput();
+      }),
+      this.sessionService.assets$.subscribe((a) => {
+        this.assets = a;
       }),
       this.sessionService.displayInfo$.subscribe((d) => {
         this.displayInfo = d;
@@ -337,5 +344,81 @@ export class AppComponent implements OnInit, OnDestroy {
       default:
         return 'ready';
     }
+  }
+
+  onFileSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    this.uploadFiles(Array.from(input.files));
+    input.value = '';
+  }
+
+  onDragOver(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDraggingOver = true;
+  }
+
+  onDragLeave(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDraggingOver = false;
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDraggingOver = false;
+    if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
+      this.uploadFiles(Array.from(event.dataTransfer.files));
+    }
+  }
+
+  private uploadFiles(files: File[]): void {
+    this.uploadError = null;
+    this.isUploading = true;
+
+    let uploadedCount = 0;
+    files.forEach((file) => {
+      this.sessionService.uploadAsset(file).subscribe({
+        next: () => {
+          uploadedCount++;
+          if (uploadedCount === files.length) {
+            this.isUploading = false;
+          }
+        },
+        error: (err) => {
+          this.isUploading = false;
+          this.uploadError = err.error?.error || `Failed to upload ${file.name}`;
+        },
+      });
+    });
+  }
+
+  deleteAsset(assetName: string): void {
+    this.uploadError = null;
+    this.sessionService.deleteAsset(assetName).subscribe({
+      error: (err) => {
+        this.uploadError = err.error?.error || `Failed to delete ${assetName}`;
+      },
+    });
+  }
+
+  formatBytes(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  isImage(name: string): boolean {
+    return /\.(png|jpe?g|bmp|tga|psd)$/i.test(name);
+  }
+
+  isAudio(name: string): boolean {
+    return /\.(wav|ogg|flac)$/i.test(name);
+  }
+
+  isFont(name: string): boolean {
+    return /\.(ttf|otf)$/i.test(name);
   }
 }

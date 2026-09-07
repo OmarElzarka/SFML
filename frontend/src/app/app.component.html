@@ -56,6 +56,99 @@
 
   <!-- ─── Main Content ───────────────────────────────────────────────── -->
   <main class="content">
+    <!-- ─── Assets Sidebar Panel ──────────────────────────────────────── -->
+    <aside class="panel panel-assets" id="panel-assets"
+           (dragover)="onDragOver($event)"
+           (dragleave)="onDragLeave($event)"
+           (drop)="onDrop($event)"
+           [class.drag-over]="isDraggingOver">
+      <div class="panel-header">
+        <div class="panel-tab active">
+          <svg class="tab-icon" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+            <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
+          </svg>
+          <span>Assets</span>
+          <span class="asset-count-badge" *ngIf="assets.length">{{ assets.length }}</span>
+        </div>
+      </div>
+
+      <div class="assets-content">
+        <!-- Asset list -->
+        <div class="asset-list" *ngIf="assets.length > 0">
+          <div class="asset-item" *ngFor="let asset of assets" [title]="asset.name">
+            <div class="asset-icon">
+              <!-- Image Icon -->
+              <svg *ngIf="isImage(asset.name)" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                <path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm1 1v8h10V4H3zm2 6l2-2.5 1.5 2 2-2.5 2.5 3H5z"/>
+              </svg>
+              <!-- Audio Icon -->
+              <svg *ngIf="isAudio(asset.name)" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                <path d="M8 2a1 1 0 00-1 1v7.17A2.5 2.5 0 109 12.5V5h3a1 1 0 001-1V3a1 1 0 00-1-1H8z"/>
+              </svg>
+              <!-- Font Icon -->
+              <svg *ngIf="isFont(asset.name)" viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                <path d="M4.5 3h7a.5.5 0 010 1h-3v8.5a.5.5 0 01-1 0V4h-3a.5.5 0 010-1z"/>
+              </svg>
+            </div>
+            <div class="asset-info">
+              <span class="asset-name">{{ asset.name }}</span>
+              <span class="asset-size">{{ formatBytes(asset.size) }}</span>
+            </div>
+            <button
+              class="asset-delete-btn"
+              (click)="deleteAsset(asset.name)"
+              title="Delete asset"
+              [disabled]="isUploading"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+                <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Empty state -->
+        <div class="assets-empty" *ngIf="assets.length === 0">
+          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+          </svg>
+          <p class="empty-title">No assets uploaded</p>
+          <p class="empty-subtitle">Drag & drop or click below to upload images, sounds, or fonts</p>
+        </div>
+
+        <!-- Upload error if any -->
+        <div class="asset-error" *ngIf="uploadError">
+          <span>{{ uploadError }}</span>
+          <button class="asset-error-dismiss" (click)="uploadError = null">✕</button>
+        </div>
+      </div>
+
+      <!-- Footer action -->
+      <div class="assets-footer">
+        <input
+          #fileInput
+          type="file"
+          id="asset-file-input"
+          multiple
+          accept=".png,.jpg,.jpeg,.bmp,.tga,.psd,.ttf,.otf,.wav,.ogg,.flac"
+          style="display: none"
+          (change)="onFileSelected($event)"
+        />
+        <button
+          id="btn-upload-asset"
+          class="btn btn-upload"
+          (click)="fileInput.click()"
+          [disabled]="isUploading"
+        >
+          <svg *ngIf="!isUploading" class="btn-icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/>
+          </svg>
+          <span *ngIf="isUploading" class="upload-spinner"></span>
+          <span>{{ isUploading ? 'Uploading...' : '+ Upload Asset' }}</span>
+        </button>
+      </div>
+    </aside>
+
     <!-- ─── Code Editor Panel ──────────────────────────────────────── -->
     <section class="panel panel-editor">
       <div class="panel-header">

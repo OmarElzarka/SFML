@@ -168,7 +168,7 @@
 /* ─── Content Area ───────────────────────────────────────────────────────── */
 .content {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 220px 1fr 1fr;
   overflow: hidden;
 }
 
@@ -177,6 +177,195 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.panel-assets {
+  border-right: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.panel-assets.drag-over {
+  background: rgba(88, 166, 255, 0.08);
+  border-color: var(--accent-primary);
+}
+
+.asset-count-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  background: rgba(88, 166, 255, 0.15);
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+.assets-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.asset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.asset-item:hover {
+  border-color: var(--border-secondary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.asset-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.asset-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-name {
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
+.asset-size {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.asset-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all var(--transition-fast);
+}
+
+.asset-delete-btn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--accent-red);
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.assets-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-xl) var(--space-sm);
+  color: var(--text-tertiary);
+}
+
+.empty-icon {
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--space-sm);
+  opacity: 0.5;
+}
+
+.empty-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.empty-subtitle {
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
+.asset-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: var(--radius-sm);
+  color: var(--accent-red);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.asset-error-dismiss {
+  border: none;
+  background: transparent;
+  color: var(--accent-red);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.assets-footer {
+  padding: var(--space-sm);
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+
+.btn-upload {
+  width: 100%;
+  justify-content: center;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent-primary);
+  border: 1px dashed rgba(88, 166, 255, 0.4);
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.btn-upload:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.2);
+  border-color: var(--accent-primary);
+}
+
+.upload-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(88, 166, 255, 0.3);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .panel-editor {
