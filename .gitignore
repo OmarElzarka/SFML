@@ -1,0 +1,30 @@
+# .NET / C#
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Node / Angular
+node_modules/
+dist/
+tmp/
+out-tsc/
+bazel-out/
+.angular/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDEs and Editors
+.idea/
+*.swp
+*~
+.vscode/
+
+# OS Files
+.DS_Store
+Thumbs.db

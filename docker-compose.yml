@@ -1,0 +1,43 @@
+services:
+  # ─── ASP.NET Core Backend ──────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend/SfmlPlayground.Api
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+      - Docker__Host=unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - sandbox-image
+    networks:
+      - playground-net
+
+  # ─── Angular Frontend ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+    networks:
+      - playground-net
+
+  # ─── Sandbox Image Builder ────────────────────────────────────────────
+  # This service just builds the sfml-sandbox image and exits.
+  sandbox-image:
+    image: sfml-sandbox:latest
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    entrypoint: ["echo", "SFML sandbox image built successfully"]
+
+networks:
+  playground-net:
+    driver: bridge
