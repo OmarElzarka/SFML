@@ -38,21 +38,38 @@ echo "  Subscription: ${CURRENT_SUB}"
 echo "[2/6] Ensuring Resource Group '${RESOURCE_GROUP}' in '${LOCATION}'..."
 az group create --name "${RESOURCE_GROUP}" --location "${LOCATION}" --output table
 
-# 4. Provision Azure Infrastructure via Bicep
-echo "[3/6] Deploying infrastructure via Bicep (VM, ACR, Storage, SQL, NSG)..."
-echo "  Validating template..."
-az deployment group validate \
-    --resource-group "${RESOURCE_GROUP}" \
-    --template-file "${SCRIPT_DIR}/main.bicep" \
-    --parameters vmAdminUsername="${VM_ADMIN_USERNAME}" \
-                 vmAuthType="password" \
-                 vmAdminPasswordOrKey="${VM_ADMIN_PASSWORD}" \
-                 sqlAdminUsername="${SQL_ADMIN_USERNAME}" \
-                 sqlAdminPassword="${SQL_ADMIN_PASSWORD}" \
-                 enableRoleAssignments=false \
-    --output none
+# 4. Detect available VM SKU & Provision Infrastructure via Bicep
+echo "[3/6] Finding available VM SKU in '${LOCATION}' and deploying via Bicep..."
+CANDIDATE_SKUS=("Standard_B2ms" "Standard_B2s" "Standard_D2s_v4" "Standard_D2as_v5" "Standard_D2s_v5")
+SELECTED_VM_SIZE=""
 
-echo "  Executing Bicep deployment..."
+for SKU in "${CANDIDATE_SKUS[@]}"; do
+    echo "  Testing VM SKU '${SKU}'..."
+    if az deployment group validate \
+        --resource-group "${RESOURCE_GROUP}" \
+        --template-file "${SCRIPT_DIR}/main.bicep" \
+        --parameters vmAdminUsername="${VM_ADMIN_USERNAME}" \
+                     vmAuthType="password" \
+                     vmAdminPasswordOrKey="${VM_ADMIN_PASSWORD}" \
+                     sqlAdminUsername="${SQL_ADMIN_USERNAME}" \
+                     sqlAdminPassword="${SQL_ADMIN_PASSWORD}" \
+                     vmSize="${SKU}" \
+                     enableRoleAssignments=false \
+        --output none 2>/dev/null; then
+        SELECTED_VM_SIZE="${SKU}"
+        echo "  ✅ Selected available VM SKU: ${SELECTED_VM_SIZE}"
+        break
+    else
+        echo "  ⚠️ SKU '${SKU}' not available in '${LOCATION}', trying next..."
+    fi
+done
+
+if [ -z "${SELECTED_VM_SIZE}" ]; then
+    SELECTED_VM_SIZE="Standard_B2s"
+    echo "  Defaulting to ${SELECTED_VM_SIZE}..."
+fi
+
+echo "  Executing Bicep deployment with VM SKU: ${SELECTED_VM_SIZE}..."
 DEPLOY_OUTPUT=$(az deployment group create \
     --resource-group "${RESOURCE_GROUP}" \
     --template-file "${SCRIPT_DIR}/main.bicep" \
@@ -61,6 +78,7 @@ DEPLOY_OUTPUT=$(az deployment group create \
                  vmAdminPasswordOrKey="${VM_ADMIN_PASSWORD}" \
                  sqlAdminUsername="${SQL_ADMIN_USERNAME}" \
                  sqlAdminPassword="${SQL_ADMIN_PASSWORD}" \
+                 vmSize="${SELECTED_VM_SIZE}" \
                  enableRoleAssignments=false \
     --output json)
 

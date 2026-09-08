@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "8754028939695735560"
+      "templateHash": "6230129728248414313"
     }
   },
   "parameters": {
@@ -58,9 +58,9 @@
     },
     "vmSize": {
       "type": "string",
-      "defaultValue": "Standard_D2s_v5",
+      "defaultValue": "Standard_B2ms",
       "metadata": {
-        "description": "Size of the Linux Virtual Machine (Standard_D2s_v5 has 2 vCPU and 8GB RAM, ideal for SFML + clangd)."
+        "description": "Size of the Linux Virtual Machine (Standard_B2ms has 2 vCPU and 8GB RAM, ideal for SFML + clangd)."
       }
     },
     "sqlAdminUsername": {

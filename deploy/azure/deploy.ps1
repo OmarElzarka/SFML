@@ -56,8 +56,38 @@ Write-Host "Connected to subscription: $($account.name) ($($account.id)) as $($a
 Write-Host "[2/6] Ensuring Resource Group '$ResourceGroup' in '$Location'..." -ForegroundColor Yellow
 az group create --name $ResourceGroup --location $Location --output table
 
-# 4. Deploy Infrastructure via Bicep
-Write-Host "[3/6] Deploying Infrastructure (VM, Storage, SQL, ACR, NSG) via Bicep..." -ForegroundColor Yellow
+# 4. Detect available VM SKU and Deploy Infrastructure via Bicep
+Write-Host "[3/6] Finding available VM SKU in '$Location' and deploying via Bicep..." -ForegroundColor Yellow
+$candidateSkus = @("Standard_B2ms", "Standard_B2s", "Standard_D2s_v4", "Standard_D2as_v5", "Standard_D2s_v5")
+$selectedSku = ""
+
+foreach ($sku in $candidateSkus) {
+    Write-Host "  Testing VM SKU '$sku'..." -ForegroundColor Cyan
+    try {
+        $null = az deployment group validate `
+            --resource-group $ResourceGroup `
+            --template-file "$PSScriptRoot/main.bicep" `
+            --parameters vmAdminUsername=$VmAdminUsername `
+                         vmAuthType="password" `
+                         vmAdminPasswordOrKey=$VmAdminPassword `
+                         sqlAdminUsername=$SqlAdminUsername `
+                         sqlAdminPassword=$SqlAdminPassword `
+                         vmSize=$sku `
+                         enableRoleAssignments=false `
+            --output none 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $selectedSku = $sku
+            Write-Host "  ✅ Selected available VM SKU: $selectedSku" -ForegroundColor Green
+            break
+        }
+    } catch { }
+}
+
+if (-not $selectedSku) {
+    $selectedSku = "Standard_B2s"
+    Write-Host "  Defaulting to $selectedSku..." -ForegroundColor Yellow
+}
+
 $deployment = az deployment group create `
     --resource-group $ResourceGroup `
     --template-file "$PSScriptRoot/main.bicep" `
@@ -66,6 +96,7 @@ $deployment = az deployment group create `
                  vmAdminPasswordOrKey=$VmAdminPassword `
                  sqlAdminUsername=$SqlAdminUsername `
                  sqlAdminPassword=$SqlAdminPassword `
+                 vmSize=$selectedSku `
                  enableRoleAssignments=false `
     --output json | ConvertFrom-Json
 
