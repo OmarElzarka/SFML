@@ -12,6 +12,7 @@ import {
   ProjectAssetDto,
 } from './services/project.service';
 import { SessionService, SessionResponse, DisplayInfo } from './services/session.service';
+import { LspClientService } from './services/lsp-client.service';
 
 declare const monaco: any;
 
@@ -116,6 +117,7 @@ export class AppComponent implements OnInit, OnDestroy {
   constructor(
     public projectService: ProjectService,
     public sessionService: SessionService,
+    private lspClient: LspClientService,
     private sanitizer: DomSanitizer
   ) {}
 
@@ -141,6 +143,7 @@ export class AppComponent implements OnInit, OnDestroy {
         this.currentProject = p;
         if (p && p.id !== prevId) {
           this.fileModels.clear();
+          this.lspClient.connect(p.id);
           // Stop any active runner when switching projects
           if (this.isRunning) {
             this.stop();
@@ -167,7 +170,7 @@ export class AppComponent implements OnInit, OnDestroy {
       this.sessionService.displayInfo$.subscribe((d) => {
         this.displayInfo = d;
         if (d) {
-          this.vncUrl = `http://${d.host}:${d.port}/vnc_lite.html?scale=true`;
+          this.vncUrl = d.url || `http://${d.host}:${d.port}/vnc_lite.html?scale=true`;
           this.safeVncUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.vncUrl);
         } else {
           this.vncUrl = null;
@@ -184,6 +187,7 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.subs.forEach((s) => s.unsubscribe());
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
+    this.lspClient.disconnect();
     this.editor?.dispose();
     this.fileModels.clear();
   }
@@ -441,12 +445,19 @@ export class AppComponent implements OnInit, OnDestroy {
       cursorBlinking: 'smooth',
       cursorSmoothCaretAnimation: 'on',
       suggestOnTriggerCharacters: true,
+      quickSuggestions: { other: true, comments: false, strings: true },
+      acceptSuggestionOnEnter: 'on',
+      tabCompletion: 'on',
+      wordBasedSuggestions: 'off',
+      parameterHints: { enabled: true, cycle: true },
       tabSize: 4,
       wordWrap: 'off',
       overviewRulerBorder: false,
       hideCursorInOverviewRuler: true,
       contextmenu: true,
     });
+
+    this.lspClient.registerMonacoProviders();
 
     // Run shortcut Ctrl+Enter
     this.editor.addAction({
@@ -479,6 +490,7 @@ export class AppComponent implements OnInit, OnDestroy {
       if (existing) existing.dispose();
 
       model = monaco.editor.createModel(file.content, 'cpp', uri);
+      this.lspClient.registerModel(file.path, model);
 
       model.onDidChangeContent(() => {
         if (this.activeFile?.id === file.id) {

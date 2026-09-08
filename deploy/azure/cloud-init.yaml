@@ -1,0 +1,160 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - docker.io
+  - nginx
+  - certbot
+  - python3-certbot-nginx
+  - jq
+  - ufw
+
+write_files:
+  - path: /etc/systemd/system/sfml-api.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=SFML Playground ASP.NET Core API
+      After=network.target docker.service
+      Requires=docker.service
+
+      [Service]
+      WorkingDirectory=/var/sfml/backend
+      ExecStart=/usr/bin/dotnet /var/sfml/backend/SfmlPlayground.Api.dll
+      Restart=always
+      RestartSec=10
+      KillSignal=SIGINT
+      SyslogIdentifier=sfml-api
+      User=sfmladmin
+      Environment=ASPNETCORE_ENVIRONMENT=Production
+      Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+      Environment=Urls=http://127.0.0.1:5000
+      EnvironmentFile=-/var/sfml/backend/app.env
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/nginx/sites-available/sfml.conf
+    permissions: '0644'
+    content: |
+      server {
+          listen 80;
+          server_name _;
+
+          client_max_body_size 50M;
+
+          # Gzip compression
+          gzip on;
+          gzip_vary on;
+          gzip_min_length 1024;
+          gzip_proxied expired no-cache no-store private auth;
+          gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml application/javascript application/json image/svg+xml;
+
+          root /var/sfml/frontend;
+          index index.html;
+
+          # Static files cache
+          location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg)$ {
+              expires 6M;
+              access_log off;
+              add_header Cache-Control "public, max-age=15552000, immutable";
+              try_files $uri =404;
+          }
+
+          # Angular SPA routing
+          location / {
+              try_files $uri $uri/ /index.html;
+          }
+
+          # ASP.NET Core API
+          location /api/ {
+              proxy_pass http://127.0.0.1:5000;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          # Health Check Endpoint
+          location /health {
+              proxy_pass http://127.0.0.1:5000/health;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          # WebSocket: LSP Server (clangd)
+          location /ws/ {
+              proxy_pass http://127.0.0.1:5000;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "Upgrade";
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_read_timeout 3600s;
+              proxy_send_timeout 3600s;
+          }
+
+          # WebSocket & HTTP: noVNC Display Proxy
+          location /vnc/ {
+              proxy_pass http://127.0.0.1:5000;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "Upgrade";
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_buffering off;
+              proxy_read_timeout 3600s;
+              proxy_send_timeout 3600s;
+          }
+      }
+
+  - path: /etc/cron.hourly/sfml-cleanup
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # Cleanup any exited SFML student containers older than 1 hour
+      docker container prune -f --filter "until=1h" > /dev/null 2>&1
+
+runcmd:
+  # 1. Enable Docker
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker sfmladmin
+
+  # 2. Install Microsoft package repository and .NET 10 / .NET 9
+  - curl -sSL https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb
+  - dpkg -i /tmp/packages-microsoft-prod.deb
+  - rm /tmp/packages-microsoft-prod.deb
+  - apt-get update
+  - apt-get install -y dotnet-sdk-9.0 aspnetcore-runtime-9.0 || apt-get install -y dotnet-sdk-8.0
+
+  # 3. Create application directories
+  - mkdir -p /var/sfml/backend
+  - mkdir -p /var/sfml/frontend
+  - mkdir -p /var/sfml/storage/lsp-workspaces
+  - chown -R sfmladmin:sfmladmin /var/sfml
+
+  # 4. Configure Nginx
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/sfml.conf /etc/nginx/sites-enabled/sfml.conf
+  - nginx -t && systemctl restart nginx
+
+  # 5. Configure firewall (UFW)
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable

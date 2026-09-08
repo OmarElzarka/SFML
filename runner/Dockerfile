@@ -47,8 +47,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # C++ compiler for student code
+    # C++ compiler & language server for student code
     g++ \
+    clangd \
     # SFML runtime dependencies
     libx11-6 \
     libxrandr2 \

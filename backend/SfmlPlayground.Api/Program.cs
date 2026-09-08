@@ -5,14 +5,44 @@ using SfmlPlayground.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add database context
+// Add database context with Azure SQL resilience
 builder.Services.AddDbContext<PlaygroundDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    var connStr = builder.Configuration.GetConnectionString("DefaultConnection");
+    options.UseSqlServer(connStr, sqlOptions =>
+    {
+        sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(30),
+            errorNumbersToAdd: null);
+    });
+});
+
+// Configure Asset Storage Service (Azure Blob Storage in cloud / Local filesystem in development)
+var azureStorageConn = builder.Configuration.GetValue<string>("AzureStorage:ConnectionString")
+    ?? builder.Configuration.GetConnectionString("AzureStorage")
+    ?? Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING");
+
+if (!string.IsNullOrWhiteSpace(azureStorageConn))
+{
+    builder.Services.AddSingleton<IAssetStorageService, AzureBlobAssetStorageService>();
+}
+else
+{
+    builder.Services.AddSingleton<IAssetStorageService, LocalFileAssetStorageService>();
+}
 
 // Add services
+builder.Services.AddHttpClient("VncHttpClient");
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddSingleton<DockerSessionService>();
+builder.Services.AddSingleton<LspService>();
+builder.Services.AddSingleton<VncProxyService>();
 builder.Services.AddHostedService<SessionCleanupService>();
+
+// Add health checks for database, storage, and app
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<PlaygroundDbContext>("database");
 
 // Configure JSON serialization for enum strings
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -20,15 +50,20 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 
-// Configure CORS for Angular dev server
+// Configure CORS (configurable via Cors:AllowedOrigins or environment variable)
+var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? new[]
+    {
+        "http://localhost:4200",
+        "http://localhost:4201",
+        "http://127.0.0.1:4200"
+    };
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:4200",
-                "http://localhost:4201",
-                "http://127.0.0.1:4200")
+        policy.WithOrigins(configuredOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -38,6 +73,13 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+});
+
+// Health check endpoint
+app.MapHealthChecks("/health");
 
 // ─── API Endpoints ──────────────────────────────────────────────────────────
 
@@ -227,15 +269,32 @@ app.MapGet("/api/sessions/{sessionId}/display", (
     if (session.Status != SfmlPlayground.Api.Models.SessionStatus.Running)
         return Results.BadRequest(new { error = "Session is not running." });
 
-    // Return the websockify connection info
-    // The frontend will connect directly to the websockify port
+    // Return the websockify connection info and unified HTTPS/WSS proxy URL
     var host = context.Request.Host.Host;
+    var port = context.Request.Host.Port;
+    var scheme = context.Request.Scheme;
+    var vncWsPath = $"vnc/{sessionId}/websockify";
+    var displayUrl = $"/vnc/{sessionId}/vnc_lite.html?scale=true&path={Uri.EscapeDataString(vncWsPath)}";
+
     return Results.Ok(new
     {
         host = host,
         port = session.DisplayPort,
-        path = "websockify"
+        path = "websockify",
+        proxyPort = port ?? (scheme == "https" ? 443 : 80),
+        proxyPath = vncWsPath,
+        url = displayUrl
     });
+});
+
+// Map secure in-engine VNC reverse proxy endpoint (both HTTP assets and WSS stream)
+app.Map("/vnc/{sessionId}/{**rest}", async (
+    string sessionId,
+    string? rest,
+    HttpContext context,
+    VncProxyService vncProxy) =>
+{
+    await vncProxy.HandleProxyRequestAsync(sessionId, rest, context);
 });
 
 // List active sessions (for debugging)
@@ -554,7 +613,54 @@ app.MapPost("/api/projects/{projectId:int}/run", async (
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<PlaygroundDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    try
+    {
+        await db.Database.MigrateAsync();
+        logger.LogInformation("Database migrations applied successfully.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "MigrateAsync failed or no pending migrations. Falling back to EnsureCreatedAsync.");
+        try
+        {
+            await db.Database.EnsureCreatedAsync();
+        }
+        catch (Exception ensureEx)
+        {
+            logger.LogError(ensureEx, "EnsureCreatedAsync also failed.");
+        }
+    }
 }
+
+// Map WebSocket LSP endpoint for Monaco C++ IntelliSense (clangd)
+app.MapGet("/ws/lsp/{projectId:int}", async (
+    int projectId,
+    HttpContext context,
+    LspService lspService,
+    PlaygroundDbContext db,
+    CancellationToken ct) =>
+{
+    if (!context.WebSockets.IsWebSocketRequest)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsync("Expected a WebSocket request for LSP.", ct);
+        return;
+    }
+
+    using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+    await lspService.HandleWebSocketAsync(projectId, webSocket, db, ct);
+});
+
+// Warm up persistent LSP container in background
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var lsp = app.Services.GetRequiredService<LspService>();
+        await lsp.EnsureLspContainerRunningAsync();
+    }
+    catch { }
+});
 
 app.Run();

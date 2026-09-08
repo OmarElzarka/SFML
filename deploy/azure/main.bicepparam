@@ -1,0 +1,12 @@
+using './main.bicep'
+
+param environment = 'prod'
+param location = 'eastus'
+param namePrefix = 'sfml'
+param vmAdminUsername = 'sfmladmin'
+param vmAuthType = 'sshPublicKey'
+param vmAdminPasswordOrKey = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC... REPLACE_WITH_YOUR_SSH_PUBLIC_KEY'
+param vmSize = 'Standard_D2s_v5'
+param sqlAdminUsername = 'sfmlsqladmin'
+param sqlAdminPassword = 'REPLACE_WITH_STRONG_PASSWORD_123!'
+param sqlSkuName = 'Basic'

@@ -16,6 +16,7 @@ public class DockerSessionService : IDisposable
     private readonly ConcurrentDictionary<string, Session> _sessions = new();
     private readonly ILogger<DockerSessionService> _logger;
     private readonly IConfiguration _config;
+    private readonly IAssetStorageService _assetStorage;
     private const string ImageName = "sfml-sandbox:latest";
     private const int MaxSessions = 50;
     private static readonly TimeSpan SessionTimeout = TimeSpan.FromMinutes(5);
@@ -37,10 +38,11 @@ public class DockerSessionService : IDisposable
         "main.cpp", "app", "compile.sh", "entrypoint.sh", "rc.xml"
     };
 
-    public DockerSessionService(ILogger<DockerSessionService> logger, IConfiguration config)
+    public DockerSessionService(ILogger<DockerSessionService> logger, IConfiguration config, IAssetStorageService assetStorage)
     {
         _logger = logger;
         _config = config;
+        _assetStorage = assetStorage;
 
         // Connect to Docker daemon
         var dockerHost = config.GetValue<string>("Docker:Host");
@@ -356,28 +358,31 @@ public class DockerSessionService : IDisposable
 
             foreach (var asset in assets)
             {
-                if (File.Exists(asset.StoragePath))
+                var targetInAssets = Path.Combine(assetsDir, asset.FileName);
+                var targetInRoot = Path.Combine(session.WorkspacePath, asset.FileName);
+                try
                 {
-                    var targetInAssets = Path.Combine(assetsDir, asset.FileName);
-                    File.Copy(asset.StoragePath, targetInAssets, true);
-
-                    var targetInRoot = Path.Combine(session.WorkspacePath, asset.FileName);
+                    await _assetStorage.MaterializeAssetToFileAsync(asset.StoragePath, targetInAssets, ct);
                     if (!File.Exists(targetInRoot))
                     {
-                        File.Copy(asset.StoragePath, targetInRoot, true);
+                        File.Copy(targetInAssets, targetInRoot, true);
                     }
 
-                    var fileInfo = new FileInfo(asset.StoragePath);
+                    var fileInfo = new FileInfo(targetInAssets);
                     lock (session.Assets)
                     {
                         session.Assets.RemoveAll(a => string.Equals(a.Name, asset.FileName, StringComparison.OrdinalIgnoreCase));
                         session.Assets.Add(new SessionAsset(asset.FileName, fileInfo.Length, DateTime.UtcNow));
                     }
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Session {SessionId}: Failed to materialize asset {Asset}", session.Id, asset.FileName);
+                }
             }
         }
 
-        var tarBytes = CreateProjectTarArchive(files, assets);
+        var tarBytes = await CreateProjectTarArchiveAsync(files, assets, ct);
         using var stream = new MemoryStream(tarBytes);
         await _docker.Containers.ExtractArchiveToContainerAsync(
             session.ContainerId,
@@ -389,9 +394,10 @@ public class DockerSessionService : IDisposable
             session.Id, files.Count, assets.Count);
     }
 
-    private static byte[] CreateProjectTarArchive(
+    private async Task<byte[]> CreateProjectTarArchiveAsync(
         List<ProjectFile> files,
-        List<ProjectAsset> assets)
+        List<ProjectAsset> assets,
+        CancellationToken ct)
     {
         using var ms = new MemoryStream();
         using (var writer = new TarWriter(ms, TarEntryFormat.Ustar, leaveOpen: true))
@@ -410,10 +416,18 @@ public class DockerSessionService : IDisposable
 
             foreach (var asset in assets)
             {
-                if (File.Exists(asset.StoragePath))
+                byte[]? assetBytes = null;
+                try
                 {
-                    var assetBytes = File.ReadAllBytes(asset.StoragePath);
+                    assetBytes = await _assetStorage.GetAssetBytesAsync(asset.StoragePath, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Session: Failed to get asset bytes for {Asset}", asset.FileName);
+                }
 
+                if (assetBytes != null)
+                {
                     var assetEntry1 = new UstarTarEntry(TarEntryType.RegularFile, $"assets/{asset.FileName}")
                     {
                         DataStream = new MemoryStream(assetBytes),

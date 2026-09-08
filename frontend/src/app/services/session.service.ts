@@ -28,6 +28,7 @@ export interface DisplayInfo {
   host: string;
   port: number;
   path: string;
+  url?: string;
 }
 
 export type SessionStatus =

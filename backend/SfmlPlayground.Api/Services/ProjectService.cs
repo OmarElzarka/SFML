@@ -8,6 +8,7 @@ public class ProjectService
 {
     private readonly PlaygroundDbContext _db;
     private readonly IWebHostEnvironment _env;
+    private readonly IAssetStorageService _assetStorage;
     private readonly ILogger<ProjectService> _logger;
 
     public static readonly HashSet<string> AllowedAssetExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -21,10 +22,11 @@ public class ProjectService
     public const long MaxTotalSizeBytes = 20 * 1024 * 1024;   // 20 MB
     public const int MaxAssetCount = 20;
 
-    public ProjectService(PlaygroundDbContext db, IWebHostEnvironment env, ILogger<ProjectService> logger)
+    public ProjectService(PlaygroundDbContext db, IWebHostEnvironment env, IAssetStorageService assetStorage, ILogger<ProjectService> logger)
     {
         _db = db;
         _env = env;
+        _assetStorage = assetStorage;
         _logger = logger;
     }
 
@@ -291,13 +293,8 @@ public class ProjectService
         if (currentTotal + formFile.Length > MaxTotalSizeBytes)
             throw new InvalidOperationException($"Total assets size would exceed 20 MB limit.");
 
-        var assetsDir = Path.Combine(GetProjectStorageDir(projectId), "assets");
-        var physicalPath = Path.Combine(assetsDir, fileName);
-
-        using (var fs = new FileStream(physicalPath, FileMode.Create, FileAccess.Write))
-        {
-            await formFile.CopyToAsync(fs, ct);
-        }
+        using var stream = formFile.OpenReadStream();
+        var storagePath = await _assetStorage.UploadAssetAsync(projectId, fileName, stream, formFile.ContentType, ct);
 
         var asset = project.Assets.FirstOrDefault(a => a.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase));
         if (asset == null)
@@ -307,7 +304,7 @@ public class ProjectService
                 ProjectId = projectId,
                 FileName = fileName,
                 RelativePath = $"assets/{fileName}",
-                StoragePath = physicalPath,
+                StoragePath = storagePath,
                 Size = formFile.Length,
                 ContentType = formFile.ContentType,
                 CreatedAt = DateTime.UtcNow,
@@ -319,7 +316,7 @@ public class ProjectService
         {
             asset.Size = formFile.Length;
             asset.ContentType = formFile.ContentType;
-            asset.StoragePath = physicalPath;
+            asset.StoragePath = storagePath;
             asset.UpdatedAt = DateTime.UtcNow;
         }
 
@@ -343,16 +340,13 @@ public class ProjectService
 
         await _db.SaveChangesAsync(ct);
 
-        if (File.Exists(asset.StoragePath))
+        try
         {
-            try
-            {
-                File.Delete(asset.StoragePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to delete physical asset file {Path}", asset.StoragePath);
-            }
+            await _assetStorage.DeleteAssetAsync(asset.StoragePath, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete asset from storage {Path}", asset.StoragePath);
         }
 
         return true;
