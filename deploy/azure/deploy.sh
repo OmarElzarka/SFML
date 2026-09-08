@@ -131,7 +131,10 @@ az vm run-command invoke \
 set -euo pipefail
 echo '=== Starting VM Application Deployment ==='
 
-# Wait for cloud-init and docker
+# Wait for cloud-init package installations and docker service
+echo 'Waiting for cloud-init package installation to complete...'
+cloud-init status --wait || true
+
 while ! systemctl is-active --quiet docker; do
     echo 'Waiting for docker service...'
     sleep 3

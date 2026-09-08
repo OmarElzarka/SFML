@@ -143,6 +143,9 @@ $acrPass = $acrCreds.passwords[0].value
 Write-Host "[6/6] Configuring VM and deploying application via Azure VM agent..." -ForegroundColor Yellow
 $vmScript = @"
 set -euo pipefail
+echo 'Waiting for cloud-init package installation to complete...'
+cloud-init status --wait || true
+
 while ! systemctl is-active --quiet docker; do
     sleep 3
 done
