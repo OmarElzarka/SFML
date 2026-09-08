@@ -33,6 +33,9 @@ param sqlAdminUsername string = 'sfmlsqladmin'
 @secure()
 param sqlAdminPassword string
 
+@description('Location for Azure SQL Server and Database (swedencentral has active SQL provisioning capacity).')
+param sqlLocation string = 'swedencentral'
+
 @description('SKU for Azure SQL Database (Basic is $5/month, 5 DTU, 2GB storage, ideal for 2-7 students).')
 param sqlSkuName string = 'Basic'
 
@@ -46,7 +49,7 @@ var uniqueSuffix = uniqueString(resourceGroup().id)
 var cleanPrefix = take(replace(toLower(namePrefix), '-', ''), 8)
 var acrName = '${cleanPrefix}acr${take(uniqueSuffix, 10)}'
 var storageAccountName = '${cleanPrefix}stg${take(uniqueSuffix, 10)}'
-var sqlServerName = '${namePrefix}sql-${uniqueSuffix}'
+var sqlServerName = '${namePrefix}sql-${take(uniqueSuffix, 8)}${take(uniqueString(sqlLocation), 4)}'
 var sqlDatabaseName = 'SfmlPlayground'
 var vnetName = '${namePrefix}-vnet-${environment}'
 var subnetName = 'default'
@@ -106,7 +109,7 @@ resource assetContainer 'Microsoft.Storage/storageAccounts/blobServices/containe
 // ==========================================
 resource sqlServer 'Microsoft.Sql/servers@2023-05-01-preview' = {
   name: sqlServerName
-  location: location
+  location: sqlLocation
   properties: {
     administratorLogin: sqlAdminUsername
     administratorLoginPassword: sqlAdminPassword
@@ -127,7 +130,7 @@ resource allowAzureIps 'Microsoft.Sql/servers/firewallRules@2023-05-01-preview' 
 resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-05-01-preview' = {
   parent: sqlServer
   name: sqlDatabaseName
-  location: location
+  location: sqlLocation
   sku: {
     name: sqlSkuName
     tier: sqlSkuName == 'Basic' ? 'Basic' : 'Standard'

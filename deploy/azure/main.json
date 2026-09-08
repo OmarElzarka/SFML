@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "2235261975898753511"
+      "templateHash": "9606015145108599855"
     }
   },
   "parameters": {
@@ -76,6 +76,13 @@
         "description": "Administrator password for Azure SQL Database."
       }
     },
+    "sqlLocation": {
+      "type": "string",
+      "defaultValue": "swedencentral",
+      "metadata": {
+        "description": "Location for Azure SQL Server and Database (swedencentral has active SQL provisioning capacity)."
+      }
+    },
     "sqlSkuName": {
       "type": "string",
       "defaultValue": "Basic",
@@ -104,7 +111,7 @@
     "cleanPrefix": "[take(replace(toLower(parameters('namePrefix')), '-', ''), 8)]",
     "acrName": "[format('{0}acr{1}', variables('cleanPrefix'), take(variables('uniqueSuffix'), 10))]",
     "storageAccountName": "[format('{0}stg{1}', variables('cleanPrefix'), take(variables('uniqueSuffix'), 10))]",
-    "sqlServerName": "[format('{0}sql-{1}', parameters('namePrefix'), variables('uniqueSuffix'))]",
+    "sqlServerName": "[format('{0}sql-{1}{2}', parameters('namePrefix'), take(variables('uniqueSuffix'), 8), take(uniqueString(parameters('sqlLocation')), 4))]",
     "sqlDatabaseName": "SfmlPlayground",
     "vnetName": "[format('{0}-vnet-{1}', parameters('namePrefix'), parameters('environment'))]",
     "subnetName": "default",
@@ -166,7 +173,7 @@
       "type": "Microsoft.Sql/servers",
       "apiVersion": "2023-05-01-preview",
       "name": "[variables('sqlServerName')]",
-      "location": "[parameters('location')]",
+      "location": "[parameters('sqlLocation')]",
       "properties": {
         "administratorLogin": "[parameters('sqlAdminUsername')]",
         "administratorLoginPassword": "[parameters('sqlAdminPassword')]",
@@ -190,7 +197,7 @@
       "type": "Microsoft.Sql/servers/databases",
       "apiVersion": "2023-05-01-preview",
       "name": "[format('{0}/{1}', variables('sqlServerName'), variables('sqlDatabaseName'))]",
-      "location": "[parameters('location')]",
+      "location": "[parameters('sqlLocation')]",
       "sku": {
         "name": "[parameters('sqlSkuName')]",
         "tier": "[if(equals(parameters('sqlSkuName'), 'Basic'), 'Basic', 'Standard')]"

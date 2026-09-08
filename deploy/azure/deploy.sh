@@ -8,6 +8,7 @@ set -euo pipefail
 TARGET_SUBSCRIPTION="${TARGET_SUBSCRIPTION:-4329056b-c3be-43dd-858f-86ecb8b64598}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-sfml-prod}"
 LOCATION="${LOCATION:-westeurope}"
+SQL_LOCATION="${SQL_LOCATION:-swedencentral}"
 VM_ADMIN_USERNAME="${VM_ADMIN_USERNAME:-sfmladmin}"
 VM_ADMIN_PASSWORD="${VM_ADMIN_PASSWORD:-SfmlVm2026!ProdPass}"
 SQL_ADMIN_USERNAME="${SQL_ADMIN_USERNAME:-sfmlsqladmin}"
@@ -53,6 +54,7 @@ for LOC in "${CANDIDATE_REGIONS[@]}"; do
             --resource-group "${RESOURCE_GROUP}" \
             --template-file "${SCRIPT_DIR}/main.bicep" \
             --parameters location="${LOC}" \
+                         sqlLocation="${SQL_LOCATION}" \
                          vmAdminUsername="${VM_ADMIN_USERNAME}" \
                          vmAuthType="password" \
                          vmAdminPasswordOrKey="${VM_ADMIN_PASSWORD}" \
@@ -77,11 +79,12 @@ if [ -z "${SELECTED_VM_SIZE}" ]; then
     echo "  Defaulting to ${SELECTED_LOCATION} with ${SELECTED_VM_SIZE}..."
 fi
 
-echo "  Executing Bicep deployment in '${SELECTED_LOCATION}' with VM SKU: ${SELECTED_VM_SIZE}..."
+echo "  Executing Bicep deployment in '${SELECTED_LOCATION}' (SQL in '${SQL_LOCATION}') with VM SKU: ${SELECTED_VM_SIZE}..."
 DEPLOY_OUTPUT=$(az deployment group create \
     --resource-group "${RESOURCE_GROUP}" \
     --template-file "${SCRIPT_DIR}/main.bicep" \
     --parameters location="${SELECTED_LOCATION}" \
+                 sqlLocation="${SQL_LOCATION}" \
                  vmAdminUsername="${VM_ADMIN_USERNAME}" \
                  vmAuthType="password" \
                  vmAdminPasswordOrKey="${VM_ADMIN_PASSWORD}" \

@@ -23,6 +23,9 @@ param(
     [string]$VmAdminPassword = "SfmlVm2026!ProdPass",
 
     [Parameter(Mandatory = $false)]
+    [string]$SqlLocation = "swedencentral",
+
+    [Parameter(Mandatory = $false)]
     [string]$SqlAdminUsername = "sfmlsqladmin",
 
     [Parameter(Mandatory = $false)]
@@ -71,6 +74,7 @@ foreach ($loc in $candidateRegions) {
                 --resource-group $ResourceGroup `
                 --template-file "$PSScriptRoot/main.bicep" `
                 --parameters location=$loc `
+                             sqlLocation=$SqlLocation `
                              vmAdminUsername=$VmAdminUsername `
                              vmAuthType="password" `
                              vmAdminPasswordOrKey=$VmAdminPassword `
@@ -96,11 +100,12 @@ if (-not $selectedSku) {
     Write-Host "  Defaulting to $selectedLocation with $selectedSku..." -ForegroundColor Yellow
 }
 
-Write-Host "  Executing Bicep deployment in '$selectedLocation' with VM SKU: $selectedSku..." -ForegroundColor Cyan
+Write-Host "  Executing Bicep deployment in '$selectedLocation' (SQL in '$SqlLocation') with VM SKU: $selectedSku..." -ForegroundColor Cyan
 $deployment = az deployment group create `
     --resource-group $ResourceGroup `
     --template-file "$PSScriptRoot/main.bicep" `
     --parameters location=$selectedLocation `
+                 sqlLocation=$SqlLocation `
                  vmAdminUsername=$VmAdminUsername `
                  vmAuthType="password" `
                  vmAdminPasswordOrKey=$VmAdminPassword `
