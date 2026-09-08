@@ -145,7 +145,7 @@ runcmd:
   # 3. Create application directories
   - mkdir -p /var/sfml/backend
   - mkdir -p /var/sfml/frontend
-  - mkdir -p /var/sfml/storage/lsp-workspaces
+  - mkdir -p /var/sfml/storage/workspace
   - chown -R sfmladmin:sfmladmin /var/sfml
 
   # 4. Configure Nginx

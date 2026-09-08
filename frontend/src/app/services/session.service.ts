@@ -68,6 +68,9 @@ export class SessionService {
         if (res.assets) {
           this._assets.next(res.assets);
         }
+        if (!this._displayInfo.value) {
+          this.fetchDisplayInfo(res.sessionId);
+        }
       })
     );
   }
@@ -129,7 +132,6 @@ export class SessionService {
 
   createSession(sourceCode: string): void {
     this._isLoading.next(true);
-    this._displayInfo.next(null);
 
     const currentSessionId = this._session.value?.sessionId;
     const body: CreateSessionRequest = {
@@ -147,8 +149,11 @@ export class SessionService {
             this._assets.next(response.assets);
           }
 
-          if (response.status === 'Running') {
+          if (!this._displayInfo.value) {
             this.fetchDisplayInfo(response.sessionId);
+          }
+
+          if (response.status === 'Running') {
             this.startHeartbeat(response.sessionId);
           } else if (
             response.status === 'Compiling' ||
@@ -172,7 +177,6 @@ export class SessionService {
 
   runProject(projectId: number): void {
     this._isLoading.next(true);
-    this._displayInfo.next(null);
 
     const currentSessionId = this._session.value?.sessionId;
     this.http
@@ -187,8 +191,11 @@ export class SessionService {
             this._assets.next(response.assets);
           }
 
-          if (response.status === 'Running') {
+          if (!this._displayInfo.value) {
             this.fetchDisplayInfo(response.sessionId);
+          }
+
+          if (response.status === 'Running') {
             this.startHeartbeat(response.sessionId);
           } else if (
             response.status === 'Compiling' ||
@@ -296,7 +303,6 @@ export class SessionService {
             ...session,
             status: 'Stopped',
           });
-          this._displayInfo.next(null);
           this._isLoading.next(false);
         },
         error: () => {
@@ -304,7 +310,6 @@ export class SessionService {
             ...session,
             status: 'Stopped',
           });
-          this._displayInfo.next(null);
           this._isLoading.next(false);
         },
       });

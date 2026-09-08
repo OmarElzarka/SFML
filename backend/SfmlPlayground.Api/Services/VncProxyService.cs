@@ -9,18 +9,18 @@ namespace SfmlPlayground.Api.Services;
 /// </summary>
 public class VncProxyService
 {
-    private readonly DockerSessionService _sessionService;
+    private readonly PersistentRuntimeService _runtimeService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<VncProxyService> _logger;
     private readonly string _runnerHost;
 
     public VncProxyService(
-        DockerSessionService sessionService,
+        PersistentRuntimeService runtimeService,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<VncProxyService> logger)
     {
-        _sessionService = sessionService;
+        _runtimeService = runtimeService;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _runnerHost = config.GetValue<string>("Runner:InternalHost") ?? "127.0.0.1";
@@ -28,15 +28,19 @@ public class VncProxyService
 
     public async Task HandleProxyRequestAsync(string sessionId, string? restPath, HttpContext context)
     {
-        var session = _sessionService.GetSession(sessionId);
-        if (session == null || session.Status != SessionStatus.Running || session.DisplayPort <= 0)
+        try
         {
-            context.Response.StatusCode = StatusCodes.Status404NotFound;
-            await context.Response.WriteAsync($"Execution session '{sessionId}' is not active or running.");
+            await _runtimeService.EnsureRuntimeContainerRunningAsync(context.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Persistent SFML runtime container is not available");
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            await context.Response.WriteAsync("Persistent SFML runtime container is starting or unavailable.");
             return;
         }
 
-        var port = session.DisplayPort;
+        var port = PersistentRuntimeService.DefaultDisplayPort;
         var subPath = (restPath ?? string.Empty).TrimStart('/');
 
         // ─── 1. WebSocket Proxy (RFB VNC Stream) ──────────────────────────────

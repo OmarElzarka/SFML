@@ -35,6 +35,7 @@ else
 // Add services
 builder.Services.AddHttpClient("VncHttpClient");
 builder.Services.AddScoped<ProjectService>();
+builder.Services.AddSingleton<PersistentRuntimeService>();
 builder.Services.AddSingleton<DockerSessionService>();
 builder.Services.AddSingleton<LspService>();
 builder.Services.AddSingleton<VncProxyService>();
@@ -264,12 +265,11 @@ app.MapGet("/api/sessions/{sessionId}/display", (
 {
     var session = sessionService.GetSession(sessionId);
     if (session == null)
-        return Results.NotFound(new { error = "Session not found." });
+    {
+        session = sessionService.InitializeSession(sessionId);
+    }
 
-    if (session.Status != SfmlPlayground.Api.Models.SessionStatus.Running)
-        return Results.BadRequest(new { error = "Session is not running." });
-
-    // Return the websockify connection info and unified HTTPS/WSS proxy URL
+    // Return the websockify connection info and unified HTTPS/WSS proxy URL (persistent runtime is always active)
     var host = context.Request.Host.Host;
     var port = context.Request.Host.Port;
     var scheme = context.Request.Scheme;
@@ -279,7 +279,7 @@ app.MapGet("/api/sessions/{sessionId}/display", (
     return Results.Ok(new
     {
         host = host,
-        port = session.DisplayPort,
+        port = session.DisplayPort > 0 ? session.DisplayPort : PersistentRuntimeService.DefaultDisplayPort,
         path = "websockify",
         proxyPort = port ?? (scheme == "https" ? 443 : 80),
         proxyPath = vncWsPath,
@@ -652,15 +652,19 @@ app.MapGet("/ws/lsp/{projectId:int}", async (
     await lspService.HandleWebSocketAsync(projectId, webSocket, db, ct);
 });
 
-// Warm up persistent LSP container in background
+// Warm up persistent SFML runtime container in background
 _ = Task.Run(async () =>
 {
     try
     {
-        var lsp = app.Services.GetRequiredService<LspService>();
-        await lsp.EnsureLspContainerRunningAsync();
+        var runtime = app.Services.GetRequiredService<PersistentRuntimeService>();
+        await runtime.EnsureRuntimeContainerRunningAsync();
+        app.Logger.LogInformation("Persistent SFML runtime container verified and ready.");
     }
-    catch { }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not pre-warm persistent SFML runtime container on boot.");
+    }
 });
 
 app.Run();

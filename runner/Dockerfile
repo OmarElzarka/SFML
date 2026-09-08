@@ -84,9 +84,8 @@ RUN ldconfig
 RUN useradd -m -s /bin/bash runner
 
 # Copy scripts
-COPY scripts/entrypoint.sh /opt/entrypoint.sh
-COPY scripts/compile.sh /opt/compile.sh
-RUN chmod +x /opt/entrypoint.sh /opt/compile.sh
+COPY scripts/ /opt/
+RUN chmod +x /opt/*.sh
 
 # Create working directory and X11 socket directory
 RUN mkdir -p /workspace && chown runner:runner /workspace \
@@ -118,4 +117,4 @@ EXPOSE 6080
 USER runner
 WORKDIR /workspace
 
-ENTRYPOINT ["/opt/entrypoint.sh"]
+ENTRYPOINT ["/opt/runtime-daemon.sh"]

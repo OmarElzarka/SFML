@@ -17,12 +17,15 @@ if [ ! -f "${SOURCE_FILE}" ]; then
     exit 1
 fi
 
-# Find all .cpp files in /workspace
 WORKSPACE_DIR="/workspace"
-CPP_FILES=""
-if [ -d "${WORKSPACE_DIR}" ]; then
-    # Collect all .cpp files under /workspace
-    CPP_FILES=$(find "${WORKSPACE_DIR}" -type f -name "*.cpp" 2>/dev/null | tr '\n' ' ')
+shift 2 2>/dev/null || true
+PASSED_FILES="$@"
+
+if [ -n "${PASSED_FILES}" ]; then
+    CPP_FILES="${PASSED_FILES}"
+elif [ -d "${WORKSPACE_DIR}" ]; then
+    # Collect .cpp files in /workspace and /workspace/src, excluding projects/ and build/
+    CPP_FILES=$(find "${WORKSPACE_DIR}" -maxdepth 2 -type f -name "*.cpp" ! -path "*/projects/*" ! -path "*/build/*" 2>/dev/null | tr '\n' ' ')
 fi
 
 if [ -z "${CPP_FILES}" ]; then

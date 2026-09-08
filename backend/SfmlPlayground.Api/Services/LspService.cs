@@ -17,89 +17,33 @@ public class LspService : IDisposable
 {
     private readonly ILogger<LspService> _logger;
     private readonly IConfiguration _config;
-    private readonly DockerClient _docker;
+    private readonly PersistentRuntimeService _runtimeService;
     private readonly string _storageRoot;
-    private const string LspContainerName = "sfml-lsp";
-    private const string ImageName = "sfml-sandbox:latest";
-    private readonly SemaphoreSlim _containerLock = new(1, 1);
-    private bool _containerVerified = false;
+    public const string LspContainerName = PersistentRuntimeService.ContainerName;
 
-    public LspService(ILogger<LspService> logger, IConfiguration config)
+    public LspService(
+        PersistentRuntimeService runtimeService,
+        IWebHostEnvironment env,
+        IConfiguration config,
+        ILogger<LspService> logger)
     {
+        _runtimeService = runtimeService;
         _logger = logger;
         _config = config;
 
-        var dockerHost = config.GetValue<string>("Docker:Host");
-        _docker = string.IsNullOrEmpty(dockerHost)
-            ? new DockerClientConfiguration().CreateClient()
-            : new DockerClientConfiguration(new Uri(dockerHost)).CreateClient();
-
-        // Host workspace directory mounted to /workspace inside sfml-lsp container
-        var configLspRoot = config.GetValue<string>("Storage:LspPath");
-        _storageRoot = !string.IsNullOrEmpty(configLspRoot)
-            ? Path.GetFullPath(configLspRoot)
-            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "storage", "lsp-workspaces"));
+        var configWorkspace = config.GetValue<string>("Storage:WorkspacePath");
+        _storageRoot = !string.IsNullOrEmpty(configWorkspace)
+            ? Path.GetFullPath(configWorkspace)
+            : Path.GetFullPath(Path.Combine(env.ContentRootPath, "storage", "workspace"));
         Directory.CreateDirectory(_storageRoot);
     }
 
     /// <summary>
-    /// Ensures the persistent sfml-lsp container is created and running.
+    /// Ensures the persistent sfml-runtime container is created and running.
     /// </summary>
     public async Task EnsureLspContainerRunningAsync(CancellationToken ct = default)
     {
-        if (_containerVerified) return;
-
-        await _containerLock.WaitAsync(ct);
-        try
-        {
-            if (_containerVerified) return;
-
-            var containers = await _docker.Containers.ListContainersAsync(new ContainersListParameters
-            {
-                All = true
-            }, ct);
-
-            var existing = containers.FirstOrDefault(c => c.Names.Any(n => n.TrimStart('/') == LspContainerName));
-
-            if (existing == null)
-            {
-                _logger.LogInformation("Creating dedicated LSP container: {Name}", LspContainerName);
-
-                // Convert Windows path to Docker-compatible path
-                var normalizedPath = _storageRoot.Replace('\\', '/');
-
-                await _docker.Containers.CreateContainerAsync(new CreateContainerParameters
-                {
-                    Image = ImageName,
-                    Name = LspContainerName,
-                    Entrypoint = new List<string> { "sleep", "infinity" },
-                    HostConfig = new HostConfig
-                    {
-                        Binds = new List<string> { $"{_storageRoot}:/workspace" },
-                        Memory = 1024 * 1024 * 1024 // 1GB limit for background clangd indexing
-                    }
-                }, ct);
-
-                await _docker.Containers.StartContainerAsync(LspContainerName, new ContainerStartParameters(), ct);
-                _logger.LogInformation("LSP container {Name} created and started.", LspContainerName);
-            }
-            else if (existing.State != "running")
-            {
-                _logger.LogInformation("Starting existing LSP container: {Name}", LspContainerName);
-                await _docker.Containers.StartContainerAsync(LspContainerName, new ContainerStartParameters(), ct);
-            }
-
-            _containerVerified = true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to ensure LSP container is running");
-            throw;
-        }
-        finally
-        {
-            _containerLock.Release();
-        }
+        await _runtimeService.EnsureRuntimeContainerRunningAsync(ct);
     }
 
     /// <summary>
@@ -374,7 +318,5 @@ public class LspService : IDisposable
 
     public void Dispose()
     {
-        _containerLock.Dispose();
-        _docker.Dispose();
     }
 }

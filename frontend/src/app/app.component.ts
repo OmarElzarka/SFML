@@ -123,6 +123,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadLayoutState();
+    this.sessionService.initSession().subscribe();
 
     this.subs.push(
       this.projectService.currentUser$.subscribe((u) => {
@@ -656,7 +657,7 @@ export class AppComponent implements OnInit, OnDestroy {
   // ─── Execution ────────────────────────────────────────────────────────────
 
   run(): void {
-    if (this.isLoading || this.isRunning || !this.currentProject) return;
+    if (this.isLoading || !this.currentProject) return;
     this.saveCurrentFileNow();
     this.terminalOutput = '';
     this.sessionService.runProject(this.currentProject.id);
@@ -670,8 +671,6 @@ export class AppComponent implements OnInit, OnDestroy {
 
   stop(): void {
     this.sessionService.stopSession();
-    this.vncUrl = null;
-    this.safeVncUrl = null;
   }
 
   focusIframe(): void {

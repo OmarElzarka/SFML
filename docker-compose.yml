@@ -29,14 +29,22 @@ services:
     networks:
       - playground-net
 
-  # ─── Sandbox Image Builder ────────────────────────────────────────────
-  # This service just builds the sfml-sandbox image and exits.
-  sandbox-image:
+  # ─── Persistent SFML Runtime Container ─────────────────────────────────
+  sfml-runtime:
     image: sfml-sandbox:latest
     build:
       context: ./runner
       dockerfile: Dockerfile
-    entrypoint: ["echo", "SFML sandbox image built successfully"]
+    container_name: sfml-runtime
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - ./backend/SfmlPlayground.Api/storage/workspace:/workspace
+    environment:
+      - DISPLAY=:99
+    networks:
+      - playground-net
 
 networks:
   playground-net:

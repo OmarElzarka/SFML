@@ -38,11 +38,18 @@ public class DockerSessionService : IDisposable
         "main.cpp", "app", "compile.sh", "entrypoint.sh", "rc.xml"
     };
 
-    public DockerSessionService(ILogger<DockerSessionService> logger, IConfiguration config, IAssetStorageService assetStorage)
+    private readonly PersistentRuntimeService _runtimeService;
+
+    public DockerSessionService(
+        ILogger<DockerSessionService> logger,
+        IConfiguration config,
+        IAssetStorageService assetStorage,
+        PersistentRuntimeService runtimeService)
     {
         _logger = logger;
         _config = config;
         _assetStorage = assetStorage;
+        _runtimeService = runtimeService;
 
         // Connect to Docker daemon
         var dockerHost = config.GetValue<string>("Docker:Host");
@@ -75,93 +82,79 @@ public class DockerSessionService : IDisposable
     /// <summary>
     /// Initializes an empty session and its workspace directory without starting Docker yet.
     /// </summary>
-    public Session InitializeSession()
+    public Session InitializeSession(string? preferredId = null)
     {
         EnsureSessionCapacity();
 
-        var sessionId = Guid.NewGuid().ToString("N")[..12];
+        var sessionId = !string.IsNullOrWhiteSpace(preferredId) ? preferredId : "runtime";
         var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
         Directory.CreateDirectory(workspacePath);
 
-        var session = new Session
+        var session = _sessions.GetOrAdd(sessionId, id => new Session
         {
-            Id = sessionId,
+            Id = id,
             Status = SessionStatus.Ready,
-            WorkspacePath = workspacePath
-        };
+            WorkspacePath = workspacePath,
+            DisplayPort = PersistentRuntimeService.DefaultDisplayPort
+        });
 
-        _sessions[sessionId] = session;
-        _logger.LogInformation("Session {SessionId}: Initialized workspace at {WorkspacePath}", sessionId, workspacePath);
+        session.Status = SessionStatus.Ready;
+        session.LastHeartbeat = DateTime.UtcNow;
+        session.DisplayPort = PersistentRuntimeService.DefaultDisplayPort;
         return session;
     }
 
     /// <summary>
-    /// Creates or starts an execution session: starts Docker container, compiles code, runs SFML app.
-    /// Reuses existing session and workspace if existingSessionId is provided.
+    /// Executes source code using the persistent SFML runtime container.
     /// </summary>
     public async Task<Session> CreateSessionAsync(string sourceCode, string? existingSessionId = null, CancellationToken ct = default)
     {
-        Session session;
-
-        if (!string.IsNullOrWhiteSpace(existingSessionId) && _sessions.TryGetValue(existingSessionId, out var existing))
+        var sessionId = !string.IsNullOrWhiteSpace(existingSessionId) ? existingSessionId : "runtime";
+        var session = _sessions.GetOrAdd(sessionId, id => new Session
         {
-            session = existing;
-            session.SourceCode = sourceCode;
-            session.LastHeartbeat = DateTime.UtcNow;
+            Id = id,
+            DisplayPort = PersistentRuntimeService.DefaultDisplayPort
+        });
 
-            if (!string.IsNullOrEmpty(session.ContainerId))
+        session.SourceCode = sourceCode;
+        session.LastHeartbeat = DateTime.UtcNow;
+        session.Status = SessionStatus.Compiling;
+        session.DisplayPort = PersistentRuntimeService.DefaultDisplayPort;
+
+        var dummyFile = new ProjectFile { Path = "main.cpp", Content = sourceCode };
+        var assetList = new List<ProjectAsset>();
+        lock (session.Assets)
+        {
+            foreach (var a in session.Assets)
             {
-                await StopContainerInternalAsync(session.ContainerId);
-                session.ContainerId = string.Empty;
+                var filePath = Path.Combine(session.WorkspacePath, "assets", a.Name);
+                if (File.Exists(filePath))
+                {
+                    assetList.Add(new ProjectAsset { FileName = a.Name, Size = a.Size, StoragePath = filePath });
+                }
             }
         }
-        else
-        {
-            EnsureSessionCapacity();
-
-            var sessionId = Guid.NewGuid().ToString("N")[..12];
-            var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
-            Directory.CreateDirectory(workspacePath);
-
-            session = new Session
-            {
-                Id = sessionId,
-                SourceCode = sourceCode,
-                Status = SessionStatus.Starting,
-                WorkspacePath = workspacePath
-            };
-
-            _sessions[sessionId] = session;
-            _logger.LogInformation("Session {SessionId}: Created", sessionId);
-        }
-
-        if (string.IsNullOrEmpty(session.WorkspacePath))
-        {
-            session.WorkspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", session.Id, "workspace");
-            Directory.CreateDirectory(session.WorkspacePath);
-        }
-
-        session.Status = SessionStatus.Starting;
-        session.ErrorMessage = null;
-        session.CompilerOutput = string.Empty;
-        session.RuntimeOutput = string.Empty;
 
         try
         {
-            await StartContainerAsync(session, (s, c) => CopySourceToContainerAsync(s, c), ct);
+            var gameSession = await _runtimeService.RunProjectAsync(0, new[] { dummyFile }, assetList, ct);
+            session.Status = gameSession.Status;
+            session.CompilerOutput = gameSession.CompilerOutput;
+            session.RuntimeOutput = gameSession.RuntimeOutput;
+            session.ErrorMessage = gameSession.ErrorMessage;
             return session;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Session {SessionId}: Failed to start", session.Id);
+            _logger.LogError(ex, "Session {SessionId}: Execution failed", session.Id);
             session.Status = SessionStatus.Error;
-            session.ErrorMessage = $"Failed to start execution environment: {ex.Message}";
+            session.ErrorMessage = $"Execution failed: {ex.Message}";
             return session;
         }
     }
 
     /// <summary>
-    /// Creates or starts an execution session for a multi-file project with persistent assets.
+    /// Executes a multi-file project using the persistent SFML runtime container.
     /// </summary>
     public async Task<Session> CreateProjectSessionAsync(
         IEnumerable<ProjectFile> files,
@@ -175,61 +168,32 @@ public class DockerSessionService : IDisposable
             ?? fileList.FirstOrDefault();
         var sourceCode = mainFile?.Content ?? string.Empty;
 
-        Session session;
-        if (!string.IsNullOrWhiteSpace(existingSessionId) && _sessions.TryGetValue(existingSessionId, out var existing))
+        var sessionId = !string.IsNullOrWhiteSpace(existingSessionId) ? existingSessionId : "runtime";
+        var session = _sessions.GetOrAdd(sessionId, id => new Session
         {
-            session = existing;
-            session.SourceCode = sourceCode;
-            session.LastHeartbeat = DateTime.UtcNow;
+            Id = id,
+            DisplayPort = PersistentRuntimeService.DefaultDisplayPort
+        });
 
-            if (!string.IsNullOrEmpty(session.ContainerId))
-            {
-                await StopContainerInternalAsync(session.ContainerId);
-                session.ContainerId = string.Empty;
-            }
-        }
-        else
-        {
-            EnsureSessionCapacity();
+        session.SourceCode = sourceCode;
+        session.LastHeartbeat = DateTime.UtcNow;
+        session.Status = SessionStatus.Compiling;
+        session.DisplayPort = PersistentRuntimeService.DefaultDisplayPort;
 
-            var sessionId = Guid.NewGuid().ToString("N")[..12];
-            var workspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", sessionId, "workspace");
-            Directory.CreateDirectory(workspacePath);
-
-            session = new Session
-            {
-                Id = sessionId,
-                SourceCode = sourceCode,
-                Status = SessionStatus.Starting,
-                WorkspacePath = workspacePath
-            };
-
-            _sessions[sessionId] = session;
-            _logger.LogInformation("Session {SessionId}: Created for project", sessionId);
-        }
-
-        if (string.IsNullOrEmpty(session.WorkspacePath))
-        {
-            session.WorkspacePath = Path.Combine(Path.GetTempPath(), "sfml-sessions", session.Id, "workspace");
-            Directory.CreateDirectory(session.WorkspacePath);
-        }
-
-        session.Status = SessionStatus.Starting;
-        session.ErrorMessage = null;
-        session.CompilerOutput = string.Empty;
-        session.RuntimeOutput = string.Empty;
-
-        var assetList = assets.ToList();
         try
         {
-            await StartContainerAsync(session, (s, c) => CopyProjectToContainerAsync(s, fileList, assetList, c), ct);
+            var gameSession = await _runtimeService.RunProjectAsync(0, fileList, assets, ct);
+            session.Status = gameSession.Status;
+            session.CompilerOutput = gameSession.CompilerOutput;
+            session.RuntimeOutput = gameSession.RuntimeOutput;
+            session.ErrorMessage = gameSession.ErrorMessage;
             return session;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Session {SessionId}: Failed to start project container", session.Id);
+            _logger.LogError(ex, "Session {SessionId}: Project execution failed", session.Id);
             session.Status = SessionStatus.Error;
-            session.ErrorMessage = $"Failed to start execution environment: {ex.Message}";
+            session.ErrorMessage = $"Execution failed: {ex.Message}";
             return session;
         }
     }
@@ -620,15 +584,15 @@ public class DockerSessionService : IDisposable
     }
 
     /// <summary>
-    /// Stops a session and cleans up its container.
+    /// Stops the running game process in the persistent runtime.
     /// </summary>
     public async Task StopSessionAsync(string sessionId)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session))
-            return;
-
-        await StopSessionInternalAsync(session);
-        _sessions.TryRemove(sessionId, out _);
+        if (_sessions.TryGetValue(sessionId, out var session))
+        {
+            await _runtimeService.StopProcessAsync();
+            session.Status = SessionStatus.Stopped;
+        }
     }
 
     private async Task StopSessionInternalAsync(Session session)
@@ -636,22 +600,8 @@ public class DockerSessionService : IDisposable
         if (session.Status == SessionStatus.Stopped)
             return;
 
-        session.Status = SessionStatus.Stopping;
-        _logger.LogInformation("Session {SessionId}: Stopping", session.Id);
-
-        try
-        {
-            if (!string.IsNullOrEmpty(session.ContainerId))
-            {
-                await StopContainerInternalAsync(session.ContainerId);
-            }
-        }
-        finally
-        {
-            PurgeWorkspaceDirectory(session);
-            session.Status = SessionStatus.Stopped;
-            _logger.LogInformation("Session {SessionId}: Stopped and cleaned up", session.Id);
-        }
+        await _runtimeService.StopProcessAsync();
+        session.Status = SessionStatus.Stopped;
     }
 
     private async Task StopContainerInternalAsync(string containerId)
