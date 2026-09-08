@@ -50,7 +50,13 @@ write_files:
 
       server {
           listen 80;
-          server_name _;
+          server_name sfml.omarelzarka.com _;
+
+          # ACME challenge location for Certbot
+          location /.well-known/acme-challenge/ {
+              root /var/sfml/frontend;
+              try_files $uri =404;
+          }
 
           client_max_body_size 50M;
 
@@ -163,3 +169,7 @@ runcmd:
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
+
+  # 6. Enable Certbot automatic renewal timer
+  - systemctl enable certbot.timer
+  - systemctl start certbot.timer

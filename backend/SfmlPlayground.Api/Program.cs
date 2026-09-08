@@ -51,10 +51,20 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 
+// Configure Forwarded Headers for Nginx reverse proxy
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 // Configure CORS (configurable via Cors:AllowedOrigins or environment variable)
 var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
     ?? new[]
     {
+        "https://sfml.omarelzarka.com",
+        "http://sfml.omarelzarka.com",
         "http://localhost:4200",
         "http://localhost:4201",
         "http://127.0.0.1:4200"
@@ -72,6 +82,8 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 app.UseCors();
 app.UseWebSockets(new WebSocketOptions

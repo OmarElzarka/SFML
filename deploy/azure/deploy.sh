@@ -209,14 +209,143 @@ systemctl enable sfml-api
 systemctl restart sfml-api
 systemctl restart nginx
 
+# 8. Configure HTTPS with Let's Encrypt for custom domain
+DOMAIN_NAME="sfml.omarelzarka.com"
+RESOLVED_IP=$(getent ahosts "${DOMAIN_NAME}" 2>/dev/null | awk '{print $1}' | head -n1 || true)
+if [ "${RESOLVED_IP}" = "${VM_PUBLIC_IP}" ]; then
+    echo "Domain ${DOMAIN_NAME} resolves to this VM (${VM_PUBLIC_IP}). Ensuring SSL certificate and HTTPS configuration..."
+    mkdir -p /var/sfml/frontend/.well-known/acme-challenge
+    if [ ! -d "/etc/letsencrypt/live/${DOMAIN_NAME}" ]; then
+        certbot certonly --webroot -w /var/sfml/frontend -d "${DOMAIN_NAME}" --non-interactive --agree-tos -m admin@omarelzarka.com --no-eff-email || true
+    fi
+    if [ -d "/etc/letsencrypt/live/${DOMAIN_NAME}" ]; then
+        cat << 'NGINX_EOF' > /etc/nginx/sites-available/sfml.conf
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sfml.omarelzarka.com 20.61.216.36;
+
+    location /.well-known/acme-challenge/ {
+        root /var/sfml/frontend;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://sfml.omarelzarka.com$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name sfml.omarelzarka.com;
+
+    ssl_certificate /etc/letsencrypt/live/sfml.omarelzarka.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sfml.omarelzarka.com/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied expired no-cache no-store private auth;
+    gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml application/javascript application/json image/svg+xml;
+
+    root /var/sfml/frontend;
+    index index.html;
+
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg)$ {
+        expires 6M;
+        access_log off;
+        add_header Cache-Control "public, max-age=15552000, immutable";
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ^~ /api/ {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location ^~ /health {
+        proxy_pass http://127.0.0.1:5000/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location ^~ /ws/ {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location ^~ /vnc/ {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+NGINX_EOF
+        mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+        cat << 'RENEW_EOF' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+#!/bin/sh
+nginx -s reload
+RENEW_EOF
+        chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+        nginx -t && systemctl reload nginx
+        echo "HTTPS enabled with Let's Encrypt for ${DOMAIN_NAME}!"
+    fi
+fi
+
 echo '=== VM Deployment Complete ==='
 "
 
 echo "Verifying deployment health..."
-HEALTH_URL="http://${VM_PUBLIC_IP}/health"
+HEALTH_URL="https://sfml.omarelzarka.com/health"
 for i in {1..30}; do
-    if curl -s -f "${HEALTH_URL}" > /dev/null 2>&1; then
-        echo "✅ Health check PASSED at ${HEALTH_URL}"
+    if curl -s -f -k "${HEALTH_URL}" > /dev/null 2>&1 || curl -s -f "http://${VM_PUBLIC_IP}/health" > /dev/null 2>&1; then
+        echo "✅ Health check PASSED"
         break
     fi
     echo "  Waiting for health check (attempt ${i}/30)..."
@@ -227,7 +356,9 @@ echo ""
 echo "====================================================="
 echo " 🎉 SFML 2.6.2 Online IDE Deployed Successfully!     "
 echo "====================================================="
-echo " Production Web IDE: http://${VM_PUBLIC_IP}"
+echo " Production Web IDE: https://sfml.omarelzarka.com"
+echo " HTTP Redirect:      http://sfml.omarelzarka.com"
+echo " Health Endpoint:    https://sfml.omarelzarka.com/health"
+echo " VM Public IP:       ${VM_PUBLIC_IP}"
 echo " DNS FQDN:           http://${VM_FQDN}"
-echo " Health Endpoint:    http://${VM_PUBLIC_IP}/health"
 echo "====================================================="
