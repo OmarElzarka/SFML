@@ -193,6 +193,7 @@ docker run --rm -v /tmp/sfml-repo/backend:/src -w /src/SfmlPlayground.Api mcr.mi
     dotnet publish -c Release -r linux-x64 --self-contained true -o /src/SfmlPlayground.Api/publish_output
 mkdir -p /var/sfml/backend
 mkdir -p /var/sfml/storage/workspace
+systemctl stop sfml-api 2>/dev/null || true
 rm -rf /var/sfml/backend/*
 cp -r /tmp/sfml-repo/backend/SfmlPlayground.Api/publish_output/* /var/sfml/backend/
 
