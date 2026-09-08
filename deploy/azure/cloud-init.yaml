@@ -43,6 +43,11 @@ write_files:
   - path: /etc/nginx/sites-available/sfml.conf
     permissions: '0644'
     content: |
+      map $http_upgrade $connection_upgrade {
+          default upgrade;
+          ''      close;
+      }
+
       server {
           listen 80;
           server_name _;
@@ -59,7 +64,7 @@ write_files:
           root /var/sfml/frontend;
           index index.html;
 
-          # Static files cache
+          # Static files cache (Angular frontend assets)
           location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg)$ {
               expires 6M;
               access_log off;
@@ -72,8 +77,8 @@ write_files:
               try_files $uri $uri/ /index.html;
           }
 
-          # ASP.NET Core API
-          location /api/ {
+          # ASP.NET Core API - Stop regex search (^~)
+          location ^~ /api/ {
               proxy_pass http://127.0.0.1:5000;
               proxy_http_version 1.1;
               proxy_set_header Host $host;
@@ -82,8 +87,8 @@ write_files:
               proxy_set_header X-Forwarded-Proto $scheme;
           }
 
-          # Health Check Endpoint
-          location /health {
+          # Health Check Endpoint - Stop regex search (^~)
+          location ^~ /health {
               proxy_pass http://127.0.0.1:5000/health;
               proxy_http_version 1.1;
               proxy_set_header Host $host;
@@ -92,12 +97,12 @@ write_files:
               proxy_set_header X-Forwarded-Proto $scheme;
           }
 
-          # WebSocket: LSP Server (clangd)
-          location /ws/ {
+          # WebSocket: LSP Server (clangd) - Stop regex search (^~)
+          location ^~ /ws/ {
               proxy_pass http://127.0.0.1:5000;
               proxy_http_version 1.1;
               proxy_set_header Upgrade $http_upgrade;
-              proxy_set_header Connection "Upgrade";
+              proxy_set_header Connection $connection_upgrade;
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -106,12 +111,12 @@ write_files:
               proxy_send_timeout 3600s;
           }
 
-          # WebSocket & HTTP: noVNC Display Proxy
-          location /vnc/ {
+          # WebSocket & HTTP: noVNC Display Proxy - Stop regex search (^~)
+          location ^~ /vnc/ {
               proxy_pass http://127.0.0.1:5000;
               proxy_http_version 1.1;
               proxy_set_header Upgrade $http_upgrade;
-              proxy_set_header Connection "Upgrade";
+              proxy_set_header Connection $connection_upgrade;
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

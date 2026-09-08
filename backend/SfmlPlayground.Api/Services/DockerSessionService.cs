@@ -815,8 +815,7 @@ public class DockerSessionService : IDisposable
     public async Task CleanupExpiredSessionsAsync()
     {
         var expired = _sessions.Values
-            .Where(s => DateTime.UtcNow - s.LastHeartbeat > SessionTimeout
-                || DateTime.UtcNow - s.CreatedAt > SessionTimeout)
+            .Where(s => DateTime.UtcNow - s.LastHeartbeat > SessionTimeout)
             .ToList();
 
         foreach (var session in expired)
