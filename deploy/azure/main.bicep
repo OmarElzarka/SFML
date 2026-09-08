@@ -284,6 +284,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
       computerName: vmName
       adminUsername: vmAdminUsername
       adminPassword: vmAuthType == 'password' ? vmAdminPasswordOrKey : null
+      customData: base64(loadTextContent('cloud-init.yaml'))
       linuxConfiguration: vmAuthType == 'sshPublicKey' ? {
         disablePasswordAuthentication: true
         ssh: {

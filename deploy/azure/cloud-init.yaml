@@ -26,7 +26,7 @@ write_files:
 
       [Service]
       WorkingDirectory=/var/sfml/backend
-      ExecStart=/usr/bin/dotnet /var/sfml/backend/SfmlPlayground.Api.dll
+      ExecStart=/var/sfml/backend/SfmlPlayground.Api
       Restart=always
       RestartSec=10
       KillSignal=SIGINT

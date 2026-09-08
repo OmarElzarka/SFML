@@ -160,11 +160,11 @@ cp -r /tmp/sfml-repo/frontend/dist/frontend/browser/* /var/sfml/frontend/
 # 4. Build backend inside dotnet sdk container (self-contained linux-x64)
 echo 'Building ASP.NET Core backend...'
 docker run --rm -v /tmp/sfml-repo/backend/SfmlPlayground.Api:/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 \
-    dotnet publish -c Release -r linux-x64 --self-contained true -o /publish
+    dotnet publish -c Release -r linux-x64 --self-contained true -o /src/publish_output
 mkdir -p /var/sfml/backend
 mkdir -p /var/sfml/storage/workspace
 rm -rf /var/sfml/backend/*
-cp -r /tmp/sfml-repo/backend/SfmlPlayground.Api/bin/Release/net10.0/linux-x64/publish/* /var/sfml/backend/ 2>/dev/null || cp -r /publish/* /var/sfml/backend/
+cp -r /tmp/sfml-repo/backend/SfmlPlayground.Api/publish_output/* /var/sfml/backend/
 
 # 5. Configure production environment
 cat << 'ENVEOF' > /var/sfml/backend/app.env
