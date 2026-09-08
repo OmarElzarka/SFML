@@ -39,9 +39,13 @@ param sqlSkuName string = 'Basic'
 @description('Optional custom domain or DNS prefix for the Public IP.')
 param dnsLabelPrefix string = ''
 
+@description('Whether to create RBAC role assignments (requires Owner/User Access Administrator role). Set false for Contributor role.')
+param enableRoleAssignments bool = false
+
 var uniqueSuffix = uniqueString(resourceGroup().id)
-var acrName = '${namePrefix}acr${uniqueSuffix}'
-var storageAccountName = '${namePrefix}stg${uniqueSuffix}'
+var cleanPrefix = take(replace(toLower(namePrefix), '-', ''), 8)
+var acrName = '${cleanPrefix}acr${take(uniqueSuffix, 10)}'
+var storageAccountName = '${cleanPrefix}stg${take(uniqueSuffix, 10)}'
 var sqlServerName = '${namePrefix}sql-${uniqueSuffix}'
 var sqlDatabaseName = 'SfmlPlayground'
 var vnetName = '${namePrefix}-vnet-${environment}'
@@ -306,7 +310,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
 // 6. Role Assignments (Managed Identity -> ACR Pull)
 // ==========================================
 // AcrPull role definition ID: 7f951dda-4ed3-4680-a7ca-43fe172d538d
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments) {
   name: guid(acr.id, vm.id, 'AcrPull')
   scope: acr
   properties: {
@@ -319,6 +323,7 @@ resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 // ==========================================
 // 7. Outputs
 // ==========================================
+output vmName string = vm.name
 output vmPublicIp string = publicIp.properties.ipAddress
 output vmFqdn string = publicIp.properties.dnsSettings.fqdn
 output acrLoginServer string = acr.properties.loginServer
