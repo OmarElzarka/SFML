@@ -6,36 +6,48 @@ No Visual Studio, no CMake, no local C++ compiler, no DLLs, no accounts, and no 
 
 ---
 
+## Live Demo
+
+https://sfml.omarelzarka.com/
+
+---
+
 ## Quick Start
 
 ### Prerequisites
-- Docker Desktop (running with Linux containers)
-- .NET 10 SDK (or latest stable .NET)
-- Node.js 20+ / 24+
+
+* Docker Desktop (running with Linux containers)
+* .NET 10 SDK (or latest stable .NET)
+* Node.js 20+ / 24+
 
 ### Run Locally for Development
 
 1. **Build the SFML Sandbox Docker Image:**
+
    ```bash
    docker build -t sfml-sandbox:latest -f runner/Dockerfile runner/
    ```
 
 2. **Start the ASP.NET Core Backend:**
+
    ```bash
    cd backend/SfmlPlayground.Api
    dotnet run
    ```
+
    *Listening at `http://localhost:5000`*
 
 3. **Start the Angular Frontend:**
+
    ```bash
    cd frontend
    npm install
    npm start
    ```
+
    *Listening at `http://localhost:4200`*
 
-4. Open [http://localhost:4200](http://localhost:4200) in your web browser. Write C++ code, click **Run**, and interact with the remote SFML window!
+4. Open http://localhost:4200 in your web browser. Write C++ code, click **Run**, and interact with the remote SFML window!
 
 ---
 
@@ -113,23 +125,23 @@ sfml-playground/
 
 ## API Reference
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/sessions` | Create a new session with C++ code & start container |
-| `GET` | `/api/sessions/{id}` | Get real-time status and compiler output |
-| `GET` | `/api/sessions/{id}/display` | Get VNC host, dynamic port, and path |
-| `POST` | `/api/sessions/{id}/stop` | Terminate session and remove container |
-| `POST` | `/api/sessions/{id}/heartbeat` | Send heartbeat to prevent auto-cleanup |
-| `GET` | `/api/sessions` | List active sessions (for diagnostics) |
+| Method | Endpoint                       | Description                                          |
+| :----- | :----------------------------- | :--------------------------------------------------- |
+| `POST` | `/api/sessions`                | Create a new session with C++ code & start container |
+| `GET`  | `/api/sessions/{id}`           | Get real-time status and compiler output             |
+| `GET`  | `/api/sessions/{id}/display`   | Get VNC host, dynamic port, and path                 |
+| `POST` | `/api/sessions/{id}/stop`      | Terminate session and remove container               |
+| `POST` | `/api/sessions/{id}/heartbeat` | Send heartbeat to prevent auto-cleanup               |
+| `GET`  | `/api/sessions`                | List active sessions (for diagnostics)               |
 
 ---
 
 ## Security Hardening
 
-- **No Host Execution**: Student code NEVER runs on the host system.
-- **Resource Constraints**: 512MB RAM, 0.5 CPU cores, max 64 processes per container.
-- **Restricted Privileges**: Dropped all Linux capabilities (`CapDrop: ALL`), with only `SYS_PTRACE` allowed for X11 virtual display initialization.
-- **`no-new-privileges`**: Enforced on every container.
-- **Non-Root Execution**: Runs as dedicated `runner` user (UID 1000).
-- **Auto-Cleanup**: Containers are launched with auto-removal and monitored by `SessionCleanupService`.
-- **Zero Database Persistence**: Zero disk state, accounts, or user data retained.
+* **No Host Execution**: Student code NEVER runs on the host system.
+* **Resource Constraints**: 512MB RAM, 0.5 CPU cores, max 64 processes per container.
+* **Restricted Privileges**: Dropped all Linux capabilities (`CapDrop: ALL`), with only `SYS_PTRACE` allowed for X11 virtual display initialization.
+* **`no-new-privileges`**: Enforced on every container.
+* **Non-Root Execution**: Runs as dedicated `runner` user (UID 1000).
+* **Auto-Cleanup**: Containers are launched with auto-removal and monitored by `SessionCleanupService`.
+* **Zero Database Persistence**: Zero disk state, accounts, or user data retained.
