@@ -1,5 +1,5 @@
 @description('Location for all resources.')
-param location string = resourceGroup().location
+param location string = 'westeurope'
 
 @description('Prefix for resource names.')
 @minLength(3)
@@ -23,8 +23,8 @@ param vmAdminPasswordOrKey string
 ])
 param vmAuthType string = 'sshPublicKey'
 
-@description('Size of the Linux Virtual Machine (Standard_B2ms has 2 vCPU and 8GB RAM, ideal for SFML + clangd).')
-param vmSize string = 'Standard_B2ms'
+@description('Size of the Linux Virtual Machine (Standard_D2s_v5 has 2 vCPU and 8GB RAM, ideal for SFML + clangd).')
+param vmSize string = 'Standard_D2s_v5'
 
 @description('Administrator login for Azure SQL Database.')
 param sqlAdminUsername string = 'sfmlsqladmin'

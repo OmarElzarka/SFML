@@ -7,7 +7,7 @@ set -euo pipefail
 
 TARGET_SUBSCRIPTION="${TARGET_SUBSCRIPTION:-4329056b-c3be-43dd-858f-86ecb8b64598}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-sfml-prod}"
-LOCATION="${LOCATION:-eastus}"
+LOCATION="${LOCATION:-westeurope}"
 VM_ADMIN_USERNAME="${VM_ADMIN_USERNAME:-sfmladmin}"
 VM_ADMIN_PASSWORD="${VM_ADMIN_PASSWORD:-SfmlVm2026!ProdPass}"
 SQL_ADMIN_USERNAME="${SQL_ADMIN_USERNAME:-sfmlsqladmin}"
@@ -40,15 +40,14 @@ az group create --name "${RESOURCE_GROUP}" --location "${LOCATION}" --output tab
 
 # 4. Detect available Region & VM SKU and Provision Infrastructure via Bicep
 echo "[3/6] Finding available VM SKU and Region via Bicep validation..."
-CANDIDATE_REGIONS=("${LOCATION}" "eastus2" "centralus" "southcentralus" "westus2")
-CANDIDATE_SKUS=("Standard_B2ms" "Standard_B2s" "Standard_D2s_v4" "Standard_D2as_v5")
+CANDIDATE_REGIONS=("${LOCATION}" "westeurope" "northeurope" "swedencentral" "germanywestcentral" "francecentral" "uksouth" "canadacentral" "eastus2" "eastus")
+CANDIDATE_SKUS=("Standard_D2s_v5" "Standard_D2as_v5" "Standard_D2s_v4" "Standard_B2ms" "Standard_B2s")
 
 SELECTED_LOCATION=""
 SELECTED_VM_SIZE=""
 
 for LOC in "${CANDIDATE_REGIONS[@]}"; do
     echo "  Checking region '${LOC}'..."
-    az group create --name "${RESOURCE_GROUP}" --location "${LOC}" --output none 2>/dev/null || true
     for SKU in "${CANDIDATE_SKUS[@]}"; do
         if az deployment group validate \
             --resource-group "${RESOURCE_GROUP}" \
@@ -73,8 +72,8 @@ for LOC in "${CANDIDATE_REGIONS[@]}"; do
 done
 
 if [ -z "${SELECTED_VM_SIZE}" ]; then
-    SELECTED_LOCATION="${LOCATION}"
-    SELECTED_VM_SIZE="Standard_B2s"
+    SELECTED_LOCATION="westeurope"
+    SELECTED_VM_SIZE="Standard_D2s_v5"
     echo "  Defaulting to ${SELECTED_LOCATION} with ${SELECTED_VM_SIZE}..."
 fi
 
@@ -131,6 +130,17 @@ ACR_CREDS=$(az acr credential show --name "${ACR_NAME}" --output json)
 ACR_USER=$(echo "${ACR_CREDS}" | jq -r '.username')
 ACR_PASS=$(echo "${ACR_CREDS}" | jq -r '.passwords[0].value')
 
+APP_ENV_RAW=$(cat << EOF
+ConnectionStrings__DefaultConnection=${SQL_CONN_STR}
+Storage__ConnectionString=${STORAGE_CONN_STR}
+Storage__ContainerName=sfml-assets
+Storage__WorkspacePath=/var/sfml/storage/workspace
+Docker__Host=unix:///var/run/docker.sock
+Docker__ImageName=sfml-sandbox:latest
+EOF
+)
+APP_ENV_B64=$(echo -n "${APP_ENV_RAW}" | base64 | tr -d '\r\n')
+
 # 7. Configure and Deploy Application onto the Azure VM
 echo "[6/6] Configuring VM, pulling runtime, and deploying application via Azure VM agent..."
 az vm run-command invoke \
@@ -168,26 +178,23 @@ echo 'Building Angular frontend...'
 docker run --rm -v /tmp/sfml-repo/frontend:/app -w /app node:20-alpine sh -c 'npm ci && npm run build'
 mkdir -p /var/sfml/frontend
 rm -rf /var/sfml/frontend/*
-cp -r /tmp/sfml-repo/frontend/dist/frontend/browser/* /var/sfml/frontend/
+if [ -d /tmp/sfml-repo/frontend/dist/frontend/browser ]; then
+    cp -r /tmp/sfml-repo/frontend/dist/frontend/browser/* /var/sfml/frontend/
+else
+    cp -r /tmp/sfml-repo/frontend/dist/frontend/* /var/sfml/frontend/
+fi
 
 # 4. Build backend inside dotnet sdk container (self-contained linux-x64)
 echo 'Building ASP.NET Core backend...'
-docker run --rm -v /tmp/sfml-repo/backend/SfmlPlayground.Api:/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 \
-    dotnet publish -c Release -r linux-x64 --self-contained true -o /src/publish_output
+docker run --rm -v /tmp/sfml-repo/backend:/src -w /src/SfmlPlayground.Api mcr.microsoft.com/dotnet/sdk:10.0 \
+    dotnet publish -c Release -r linux-x64 --self-contained true -o /src/SfmlPlayground.Api/publish_output
 mkdir -p /var/sfml/backend
 mkdir -p /var/sfml/storage/workspace
 rm -rf /var/sfml/backend/*
 cp -r /tmp/sfml-repo/backend/SfmlPlayground.Api/publish_output/* /var/sfml/backend/
 
 # 5. Configure production environment
-cat << 'ENVEOF' > /var/sfml/backend/app.env
-ConnectionStrings__DefaultConnection=${SQL_CONN_STR}
-Storage__ConnectionString=${STORAGE_CONN_STR}
-Storage__ContainerName=sfml-assets
-Storage__WorkspacePath=/var/sfml/storage/workspace
-Docker__Host=unix:///var/run/docker.sock
-Docker__ImageName=sfml-sandbox:latest
-ENVEOF
+echo '${APP_ENV_B64}' | base64 -d > /var/sfml/backend/app.env
 
 # 6. Ensure permissions
 chmod +x /var/sfml/backend/SfmlPlayground.Api 2>/dev/null || true

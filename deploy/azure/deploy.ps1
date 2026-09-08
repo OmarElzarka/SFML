@@ -14,7 +14,7 @@ param(
     [string]$ResourceGroup = "rg-sfml-prod",
 
     [Parameter(Mandatory = $false)]
-    [string]$Location = "eastus",
+    [string]$Location = "westeurope",
 
     [Parameter(Mandatory = $false)]
     [string]$VmAdminUsername = "sfmladmin",
@@ -56,42 +56,52 @@ Write-Host "Connected to subscription: $($account.name) ($($account.id)) as $($a
 Write-Host "[2/6] Ensuring Resource Group '$ResourceGroup' in '$Location'..." -ForegroundColor Yellow
 az group create --name $ResourceGroup --location $Location --output table
 
-# 4. Detect available VM SKU and Deploy Infrastructure via Bicep
-Write-Host "[3/6] Finding available VM SKU in '$Location' and deploying via Bicep..." -ForegroundColor Yellow
-$candidateSkus = @("Standard_B2ms", "Standard_B2s", "Standard_D2s_v4", "Standard_D2as_v5", "Standard_D2s_v5")
+# 4. Detect available VM SKU and Region via Bicep validation
+Write-Host "[3/6] Finding available VM SKU and Region via Bicep validation..." -ForegroundColor Yellow
+$candidateRegions = @($Location, "westeurope", "northeurope", "swedencentral", "germanywestcentral", "francecentral", "uksouth", "canadacentral", "eastus2", "eastus")
+$candidateSkus = @("Standard_D2s_v5", "Standard_D2as_v5", "Standard_D2s_v4", "Standard_B2ms", "Standard_B2s")
+$selectedLocation = ""
 $selectedSku = ""
 
-foreach ($sku in $candidateSkus) {
-    Write-Host "  Testing VM SKU '$sku'..." -ForegroundColor Cyan
-    try {
-        $null = az deployment group validate `
-            --resource-group $ResourceGroup `
-            --template-file "$PSScriptRoot/main.bicep" `
-            --parameters vmAdminUsername=$VmAdminUsername `
-                         vmAuthType="password" `
-                         vmAdminPasswordOrKey=$VmAdminPassword `
-                         sqlAdminUsername=$SqlAdminUsername `
-                         sqlAdminPassword=$SqlAdminPassword `
-                         vmSize=$sku `
-                         enableRoleAssignments=false `
-            --output none 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $selectedSku = $sku
-            Write-Host "  ✅ Selected available VM SKU: $selectedSku" -ForegroundColor Green
-            break
-        }
-    } catch { }
+foreach ($loc in $candidateRegions) {
+    Write-Host "  Checking region '$loc'..." -ForegroundColor Cyan
+    foreach ($sku in $candidateSkus) {
+        try {
+            $null = az deployment group validate `
+                --resource-group $ResourceGroup `
+                --template-file "$PSScriptRoot/main.bicep" `
+                --parameters location=$loc `
+                             vmAdminUsername=$VmAdminUsername `
+                             vmAuthType="password" `
+                             vmAdminPasswordOrKey=$VmAdminPassword `
+                             sqlAdminUsername=$SqlAdminUsername `
+                             sqlAdminPassword=$SqlAdminPassword `
+                             vmSize=$sku `
+                             enableRoleAssignments=false `
+                --output none 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $selectedLocation = $loc
+                $selectedSku = $sku
+                Write-Host "  ✅ Validated active capacity: Region '$selectedLocation', VM SKU '$selectedSku'" -ForegroundColor Green
+                break
+            }
+        } catch { }
+    }
+    if ($selectedSku) { break }
 }
 
 if (-not $selectedSku) {
-    $selectedSku = "Standard_B2s"
-    Write-Host "  Defaulting to $selectedSku..." -ForegroundColor Yellow
+    $selectedLocation = "westeurope"
+    $selectedSku = "Standard_D2s_v5"
+    Write-Host "  Defaulting to $selectedLocation with $selectedSku..." -ForegroundColor Yellow
 }
 
+Write-Host "  Executing Bicep deployment in '$selectedLocation' with VM SKU: $selectedSku..." -ForegroundColor Cyan
 $deployment = az deployment group create `
     --resource-group $ResourceGroup `
     --template-file "$PSScriptRoot/main.bicep" `
-    --parameters vmAdminUsername=$VmAdminUsername `
+    --parameters location=$selectedLocation `
+                 vmAdminUsername=$VmAdminUsername `
                  vmAuthType="password" `
                  vmAdminPasswordOrKey=$VmAdminPassword `
                  sqlAdminUsername=$SqlAdminUsername `
@@ -139,6 +149,16 @@ $acrCreds = az acr credential show --name $acrName --output json | ConvertFrom-J
 $acrUser = $acrCreds.username
 $acrPass = $acrCreds.passwords[0].value
 
+$appEnvRaw = @"
+ConnectionStrings__DefaultConnection=$sqlConnStr
+Storage__ConnectionString=$storageConnStr
+Storage__ContainerName=sfml-assets
+Storage__WorkspacePath=/var/sfml/storage/workspace
+Docker__Host=unix:///var/run/docker.sock
+Docker__ImageName=sfml-sandbox:latest
+"@
+$appEnvB64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($appEnvRaw))
+
 # 7. Configure VM and Deploy Application
 Write-Host "[6/6] Configuring VM and deploying application via Azure VM agent..." -ForegroundColor Yellow
 $vmScript = @"
@@ -160,23 +180,20 @@ cd /tmp/sfml-repo
 docker run --rm -v /tmp/sfml-repo/frontend:/app -w /app node:20-alpine sh -c 'npm ci && npm run build'
 mkdir -p /var/sfml/frontend
 rm -rf /var/sfml/frontend/*
-cp -r /tmp/sfml-repo/frontend/dist/frontend/browser/* /var/sfml/frontend/
+if [ -d /tmp/sfml-repo/frontend/dist/frontend/browser ]; then
+    cp -r /tmp/sfml-repo/frontend/dist/frontend/browser/* /var/sfml/frontend/
+else
+    cp -r /tmp/sfml-repo/frontend/dist/frontend/* /var/sfml/frontend/
+fi
 
-docker run --rm -v /tmp/sfml-repo/backend/SfmlPlayground.Api:/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 \
-    dotnet publish -c Release -r linux-x64 --self-contained true -o /src/publish_output
+docker run --rm -v /tmp/sfml-repo/backend:/src -w /src/SfmlPlayground.Api mcr.microsoft.com/dotnet/sdk:10.0 \
+    dotnet publish -c Release -r linux-x64 --self-contained true -o /src/SfmlPlayground.Api/publish_output
 mkdir -p /var/sfml/backend
 mkdir -p /var/sfml/storage/workspace
 rm -rf /var/sfml/backend/*
 cp -r /tmp/sfml-repo/backend/SfmlPlayground.Api/publish_output/* /var/sfml/backend/
 
-cat << 'ENVEOF' > /var/sfml/backend/app.env
-ConnectionStrings__DefaultConnection=$sqlConnStr
-Storage__ConnectionString=$storageConnStr
-Storage__ContainerName=sfml-assets
-Storage__WorkspacePath=/var/sfml/storage/workspace
-Docker__Host=unix:///var/run/docker.sock
-Docker__ImageName=sfml-sandbox:latest
-ENVEOF
+echo '$appEnvB64' | base64 -d > /var/sfml/backend/app.env
 
 chmod +x /var/sfml/backend/SfmlPlayground.Api 2>/dev/null || true
 chown -R sfmladmin:sfmladmin /var/sfml
