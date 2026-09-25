@@ -60,6 +60,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-dri \
     libfreetype6 \
     libopenal1 \
+    libvorbis0a \
+    libvorbisenc2 \
     libvorbisfile3 \
     libflac8 \
     # Virtual display
