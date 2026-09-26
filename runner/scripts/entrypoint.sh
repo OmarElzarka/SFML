@@ -74,6 +74,16 @@ for i in $(seq 1 30); do
     sleep 0.1
 done
 
+# ─── Start PulseAudio Virtual Audio Server ──────────────────────────────────
+echo "[entrypoint] Starting PulseAudio server..."
+export PULSE_SERVER=unix:/tmp/pulse-socket
+pulseaudio --daemonize=yes --exit-idle-time=-1 --disallow-exit=yes 2>/dev/null || pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
+
+# ─── Start Audio Relay WebSocket Server ─────────────────────────────────────
+echo "[entrypoint] Starting audio relay on port 6081..."
+python3 /opt/audio-relay.py &
+AUDIO_RELAY_PID=$!
+
 echo "DISPLAY_READY"
 echo "WEBSOCKIFY_PORT=${WEBSOCKIFY_PORT}"
 
@@ -91,6 +101,8 @@ echo "APP_STARTED"
 echo "APP_FINISHED"
 
 # Cleanup
+kill ${AUDIO_RELAY_PID} 2>/dev/null || true
+pulseaudio --kill 2>/dev/null || true
 kill ${X11VNC_PID} 2>/dev/null || true
 kill ${WEBSOCKIFY_PID} 2>/dev/null || true
 kill ${OPENBOX_PID} 2>/dev/null || true

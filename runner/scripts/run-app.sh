@@ -18,6 +18,7 @@ fi
 chmod +x "${APP_BIN}"
 
 export DISPLAY=:99
+export PULSE_SERVER=unix:/tmp/pulse-socket
 cd /workspace
 # Run the application detached using nohup and disown
 nohup "${APP_BIN}" > /tmp/app.log 2>&1 &

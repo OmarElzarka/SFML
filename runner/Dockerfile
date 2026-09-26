@@ -64,6 +64,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvorbisenc2 \
     libvorbisfile3 \
     libflac8 \
+    # Audio subsystem & streamer
+    pulseaudio \
+    pulseaudio-utils \
+    libpulse0 \
+    python3-websockets \
     # Virtual display
     xvfb \
     # VNC server
@@ -87,7 +92,7 @@ RUN useradd -m -s /bin/bash runner
 
 # Copy scripts
 COPY scripts/ /opt/
-RUN chmod +x /opt/*.sh
+RUN chmod +x /opt/*.sh /opt/*.py 2>/dev/null || true
 
 # Create working directory and X11 socket directory
 RUN mkdir -p /workspace && chown runner:runner /workspace \
@@ -99,10 +104,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-xserver-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Openbox configuration
+# Copy Openbox and PulseAudio configuration
 COPY config/rc.xml /etc/xdg/openbox/rc.xml
-RUN mkdir -p /home/runner/.config/openbox \
+COPY config/pulse-default.pa /etc/pulse/default.pa
+COPY config/pulse-daemon.conf /etc/pulse/daemon.conf
+RUN mkdir -p /home/runner/.config/openbox /home/runner/.config/pulse \
     && cp /etc/xdg/openbox/rc.xml /home/runner/.config/openbox/rc.xml \
+    && cp /etc/pulse/default.pa /home/runner/.config/pulse/default.pa \
+    && cp /etc/pulse/daemon.conf /home/runner/.config/pulse/daemon.conf \
     && chown -R runner:runner /home/runner/.config
 
 # Customize noVNC lite UI to eliminate curved borders and status bar
@@ -114,7 +123,7 @@ RUN sed -i 's|</body>|<script>window.addEventListener("load",function(){window.a
 # noVNC is installed at /usr/share/novnc
 # websockify is available as a command
 
-EXPOSE 6080
+EXPOSE 6080 6081
 
 USER runner
 WORKDIR /workspace

@@ -1,0 +1,9 @@
+# PulseAudio configuration for SFML Playground Container
+# Minimal headless configuration: no D-Bus, no udev, pure virtual null-sink.
+
+.fail
+load-module module-augment-properties
+load-module module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse-socket
+load-module module-null-sink sink_name=SFML_Virtual_Sink sink_properties=device.description="SFML_Virtual_Sink"
+set-default-sink SFML_Virtual_Sink
+load-module module-always-sink

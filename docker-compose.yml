@@ -39,6 +39,7 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:6080:6080"
+      - "127.0.0.1:6081:6081"
     volumes:
       - ./backend/SfmlPlayground.Api/storage/workspace:/workspace
     environment:

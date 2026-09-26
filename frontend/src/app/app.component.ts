@@ -13,6 +13,7 @@ import {
 } from './services/project.service';
 import { SessionService, SessionResponse, DisplayInfo } from './services/session.service';
 import { LspClientService } from './services/lsp-client.service';
+import { AudioService } from './services/audio.service';
 
 declare const monaco: any;
 
@@ -117,6 +118,7 @@ export class AppComponent implements OnInit, OnDestroy {
   constructor(
     public projectService: ProjectService,
     public sessionService: SessionService,
+    public audioService: AudioService,
     private lspClient: LspClientService,
     private sanitizer: DomSanitizer
   ) {}
@@ -173,9 +175,13 @@ export class AppComponent implements OnInit, OnDestroy {
         if (d) {
           this.vncUrl = d.url || `http://${d.host}:${d.port}/vnc_lite.html?scale=true`;
           this.safeVncUrl = this.sanitizer.bypassSecurityTrustResourceUrl(this.vncUrl);
+          if (d.audioPath && this.isRunning) {
+            this.audioService.connect(d.audioPath);
+          }
         } else {
           this.vncUrl = null;
           this.safeVncUrl = null;
+          this.audioService.disconnect();
         }
       }),
 
@@ -189,6 +195,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.subs.forEach((s) => s.unsubscribe());
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.lspClient.disconnect();
+    this.audioService.disconnect();
     this.editor?.dispose();
     this.fileModels.clear();
   }
@@ -658,6 +665,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   run(): void {
     if (this.isLoading || !this.currentProject) return;
+    this.audioService.resume();
     this.saveCurrentFileNow();
     this.terminalOutput = '';
     this.sessionService.runProject(this.currentProject.id);
@@ -670,10 +678,25 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   stop(): void {
+    this.audioService.disconnect();
     this.sessionService.stopSession();
   }
 
+  toggleAudioMute(): void {
+    this.audioService.resume();
+    this.audioService.toggleMute();
+  }
+
+  onVolumeChange(event: Event): void {
+    this.audioService.resume();
+    const input = event.target as HTMLInputElement;
+    if (input) {
+      this.audioService.setVolume(parseFloat(input.value));
+    }
+  }
+
   focusIframe(): void {
+    this.audioService.resume();
     if (this.vncFrame?.nativeElement) {
       this.vncFrame.nativeElement.focus();
       try {
@@ -699,12 +722,17 @@ export class AppComponent implements OnInit, OnDestroy {
         lines.push('🔨 Compiling all project C++ sources with G++ 11...');
         break;
       case 'CompileError':
+        this.audioService.disconnect();
         lines.push('❌ Compilation Failed:\n');
         if (this.session.compilerOutput) lines.push(this.session.compilerOutput);
         break;
       case 'Running':
         lines.push('✅ Multi-file C++ build succeeded');
         lines.push('🖥️  SFML 2.6.2 window active via Xvfb + noVNC');
+        lines.push('🔊 SFML Audio active via PulseAudio + Web Audio API');
+        if (this.displayInfo?.audioPath) {
+          this.audioService.connect(this.displayInfo.audioPath);
+        }
         if (this.poppedOut && this.popOutWindow && this.vncUrl) {
           // If popped out, navigate the popup window to the fresh vncUrl
           try {
@@ -715,12 +743,15 @@ export class AppComponent implements OnInit, OnDestroy {
         }
         break;
       case 'Stopped':
+        this.audioService.disconnect();
         lines.push('⏹️  Execution session stopped');
         break;
       case 'TimedOut':
+        this.audioService.disconnect();
         lines.push('⏱️  Execution timed out');
         break;
       case 'Error':
+        this.audioService.disconnect();
         lines.push('❌ Execution Error');
         if (this.session.errorMessage) lines.push('\n' + this.session.errorMessage);
         if (this.session.compilerOutput) lines.push('\n' + this.session.compilerOutput);

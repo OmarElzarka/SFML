@@ -40,13 +40,14 @@ public class VncProxyService
             return;
         }
 
-        var port = PersistentRuntimeService.DefaultDisplayPort;
         var subPath = (restPath ?? string.Empty).TrimStart('/');
+        var isAudio = subPath.StartsWith("audio", StringComparison.OrdinalIgnoreCase);
+        var port = isAudio ? PersistentRuntimeService.DefaultAudioPort : PersistentRuntimeService.DefaultDisplayPort;
 
-        // ─── 1. WebSocket Proxy (RFB VNC Stream) ──────────────────────────────
+        // ─── 1. WebSocket Proxy (RFB VNC Stream & Audio Stream) ───────────────
         if (context.WebSockets.IsWebSocketRequest)
         {
-            await HandleWebSocketProxyAsync(sessionId, port, subPath, context);
+            await HandleWebSocketProxyAsync(sessionId, port, isAudio ? "" : subPath, context);
             return;
         }
 

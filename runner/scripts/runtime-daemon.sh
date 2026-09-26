@@ -62,12 +62,33 @@ for i in $(seq 1 30); do
     sleep 0.1
 done
 
-echo "[runtime-daemon] SFML 2.6.2 graphical runtime is ACTIVE on display ${DISPLAY_NUM}, port ${WEBSOCKIFY_PORT}."
+# 5. Start PulseAudio Virtual Audio Server
+echo "[runtime-daemon] Starting PulseAudio server..."
+export PULSE_SERVER=unix:/tmp/pulse-socket
+pulseaudio --daemonize=yes --exit-idle-time=-1 --disallow-exit=yes 2>/dev/null || pulseaudio --start --exit-idle-time=-1 2>/dev/null || true
+
+# Wait for PulseAudio
+for i in $(seq 1 30); do
+    if pactl --server=unix:/tmp/pulse-socket stat >/dev/null 2>&1; then
+        echo "[runtime-daemon] PulseAudio is ready at /tmp/pulse-socket."
+        break
+    fi
+    sleep 0.1
+done
+
+# 6. Start Audio Relay WebSocket Server
+echo "[runtime-daemon] Starting audio relay on port 6081..."
+python3 /opt/audio-relay.py &
+AUDIO_RELAY_PID=$!
+
+echo "[runtime-daemon] SFML 2.6.2 graphical & audio runtime is ACTIVE on display ${DISPLAY_NUM}, VNC port ${WEBSOCKIFY_PORT}, Audio port 6081."
 
 # Cleanup on signal
 cleanup() {
-    echo "[runtime-daemon] Shutting down graphical services..."
+    echo "[runtime-daemon] Shutting down graphical and audio services..."
     pkill -9 -x app 2>/dev/null || true
+    kill ${AUDIO_RELAY_PID} 2>/dev/null || true
+    pulseaudio --kill 2>/dev/null || true
     kill ${WEBSOCKIFY_PID} 2>/dev/null || true
     kill ${X11VNC_PID} 2>/dev/null || true
     kill ${OPENBOX_PID} 2>/dev/null || true

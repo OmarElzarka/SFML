@@ -25,6 +25,7 @@ public class PersistentRuntimeService : IDisposable
     public const string ContainerName = "sfml-runtime";
     public const string ImageName = "sfml-sandbox:latest";
     public const int DefaultDisplayPort = 6080;
+    public const int DefaultAudioPort = 6081;
 
     // Single active conceptual game session
     private readonly GameSession _activeSession = new()
@@ -102,7 +103,8 @@ public class PersistentRuntimeService : IDisposable
                         Binds = new List<string> { $"{normalizedPath}:/workspace" },
                         PortBindings = new Dictionary<string, IList<PortBinding>>
                         {
-                            ["6080/tcp"] = new List<PortBinding> { new() { HostIP = "127.0.0.1", HostPort = DefaultDisplayPort.ToString() } }
+                            ["6080/tcp"] = new List<PortBinding> { new() { HostIP = "127.0.0.1", HostPort = DefaultDisplayPort.ToString() } },
+                            ["6081/tcp"] = new List<PortBinding> { new() { HostIP = "127.0.0.1", HostPort = DefaultAudioPort.ToString() } }
                         },
                         Memory = 2048L * 1024 * 1024,      // 2 GB RAM limit
                         NanoCPUs = 2_000_000_000,          // 2 CPU cores limit

@@ -28,6 +28,7 @@ export interface DisplayInfo {
   host: string;
   port: number;
   path: string;
+  audioPath?: string;
   url?: string;
 }
 

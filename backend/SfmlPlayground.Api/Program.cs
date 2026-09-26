@@ -286,6 +286,7 @@ app.MapGet("/api/sessions/{sessionId}/display", (
     var port = context.Request.Host.Port;
     var scheme = context.Request.Scheme;
     var vncWsPath = $"vnc/{sessionId}/websockify";
+    var audioWsPath = $"vnc/{sessionId}/audio";
     var displayUrl = $"/vnc/{sessionId}/vnc_lite.html?scale=true&path={Uri.EscapeDataString(vncWsPath)}";
 
     return Results.Ok(new
@@ -295,6 +296,7 @@ app.MapGet("/api/sessions/{sessionId}/display", (
         path = "websockify",
         proxyPort = port ?? (scheme == "https" ? 443 : 80),
         proxyPath = vncWsPath,
+        audioPath = audioWsPath,
         url = displayUrl
     });
 });

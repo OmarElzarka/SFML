@@ -800,6 +800,52 @@
   color: #ffffff;
 }
 
+.audio-control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(22, 27, 34, 0.7);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin-right: 4px;
+}
+
+.audio-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.audio-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-tertiary);
+}
+
+.audio-btn.active {
+  color: #3fb950;
+  filter: drop-shadow(0 0 4px rgba(63, 185, 80, 0.4));
+}
+
+.audio-btn.muted {
+  color: var(--text-muted);
+}
+
+.audio-slider {
+  width: 56px;
+  height: 4px;
+  accent-color: var(--accent-blue);
+  cursor: pointer;
+  outline: none;
+}
+
 .viewport-frame-wrapper {
   flex: 1;
   position: relative;
