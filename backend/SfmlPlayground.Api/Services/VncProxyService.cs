@@ -60,10 +60,13 @@ public class VncProxyService
         var ct = context.RequestAborted;
         _logger.LogInformation("Session {SessionId}: Upgrading VNC WebSocket proxy on port {Port} (path: {Path})", sessionId, port, subPath);
 
+        var requestedProtocol = context.WebSockets.WebSocketRequestedProtocols.FirstOrDefault();
         WebSocket clientWs;
         try
         {
-            clientWs = await context.WebSockets.AcceptWebSocketAsync("binary");
+            clientWs = !string.IsNullOrEmpty(requestedProtocol)
+                ? await context.WebSockets.AcceptWebSocketAsync(requestedProtocol)
+                : await context.WebSockets.AcceptWebSocketAsync();
         }
         catch
         {
@@ -74,8 +77,10 @@ public class VncProxyService
         {
             using var targetWs = new ClientWebSocket();
             targetWs.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
-            // Request binary subprotocol if supported
-            targetWs.Options.AddSubProtocol("binary");
+            if (!string.IsNullOrEmpty(clientWs.SubProtocol))
+            {
+                targetWs.Options.AddSubProtocol(clientWs.SubProtocol);
+            }
 
             var targetUri = new Uri($"ws://{_runnerHost}:{port}/{subPath}");
 

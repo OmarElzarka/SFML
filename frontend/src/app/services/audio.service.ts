@@ -104,9 +104,12 @@ export class AudioService {
       this.audioContext.resume().catch(() => {});
     }
 
-    const int16 = new Int16Array(buffer);
-    const frameCount = Math.floor(int16.length / 2);
-    if (frameCount === 0) return;
+    // Align to 4 bytes (2 channels * 2 bytes = 1 stereo frame = 4 bytes)
+    const safeBytes = buffer.byteLength - (buffer.byteLength % 4);
+    if (safeBytes === 0) return;
+
+    const frameCount = safeBytes / 4;
+    const int16 = new Int16Array(buffer, 0, safeBytes / 2);
 
     // Detect non-silent audio signal for UI activity indicator
     let isSilent = true;
@@ -134,8 +137,8 @@ export class AudioService {
     source.connect(this.gainNode);
 
     const now = this.audioContext.currentTime;
-    if (this.nextPlayTime < now) {
-      this.nextPlayTime = now + 0.025; // Small 25ms lead-in buffer
+    if (this.nextPlayTime < now || this.nextPlayTime > now + 0.15) {
+      this.nextPlayTime = now + 0.025; // Small 25ms lead-in buffer, prevent lag buildup
     }
 
     source.start(this.nextPlayTime);
